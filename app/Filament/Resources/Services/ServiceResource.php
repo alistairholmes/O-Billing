@@ -52,6 +52,9 @@ class ServiceResource extends Resource
                     ->label('Default service')
                     ->helperText('The group\'s plain service when it has no real variants — shown without a variant suffix on invoices.')
                     ->default(false),
+                Toggle::make('taxable')
+                    ->helperText('Whether this service is subject to tax (e.g. VAT) when billed.')
+                    ->default(true),
                 Toggle::make('active')->default(true),
             ]);
     }
@@ -66,6 +69,10 @@ class ServiceResource extends Resource
                     ->badge()
                     ->color('primary'),
                 TextColumn::make('code')->badge(),
+                TextColumn::make('taxable')
+                    ->badge()
+                    ->formatStateUsing(fn (bool $state): string => $state ? 'Yes' : 'No')
+                    ->color(fn (bool $state): string => $state ? 'success' : 'gray'),
                 IconColumn::make('is_default')->label('Default')->boolean(),
                 IconColumn::make('active')->boolean(),
                 TextColumn::make('tariffs_count')->label('Tariffs')->counts('tariffs')->badge(),

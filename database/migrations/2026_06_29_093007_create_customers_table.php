@@ -20,7 +20,11 @@ return new class extends Migration
             $table->string('email')->nullable();
             $table->string('phone')->nullable();
             $table->string('address')->nullable();
-            $table->decimal('property_value', 15, 2)->nullable(); // for per_property_value rates
+            $table->decimal('property_value', 15, 2)->nullable(); // rateable value for per_property_value rates
+            // Optional valuation-roll detail, captured when available.
+            $table->decimal('land_size', 15, 2)->nullable();         // area, e.g. m²
+            $table->decimal('land_value', 15, 2)->nullable();
+            $table->decimal('improvement_value', 15, 2)->nullable();
             $table->char('currency', 3)->default('ZAR');
             $table->boolean('active')->default(true);
             $table->timestamps();

@@ -19,7 +19,7 @@ return new class extends Migration
             // per_unit = unit price x quantity (water metering deferred, but supported)
             $table->enum('billing_basis', ['flat', 'per_property_value', 'per_unit'])->default('flat');
             $table->string('unit_label')->nullable(); // e.g. "kL", "bin"
-            $table->boolean('taxable')->default(true);
+            // Taxability lives on the individual service, not the group.
             $table->boolean('active')->default(true);
             $table->timestamps();
         });

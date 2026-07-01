@@ -20,6 +20,7 @@ return new class extends Migration
             $table->string('name');                 // High Density, Low Density, …
             $table->string('code')->nullable();
             $table->boolean('is_default')->default(false);
+            $table->boolean('taxable')->default(true);
             $table->boolean('active')->default(true);
             $table->timestamps();
             $table->index(['service_type_id', 'active']);

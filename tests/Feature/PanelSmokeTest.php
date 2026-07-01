@@ -19,6 +19,19 @@ class PanelSmokeTest extends TestCase
         $municipality = Municipality::create(['name' => 'Smoke City', 'base_currency' => 'ZAR']);
         $user->municipalities()->attach($municipality);
 
+        // A completed run with multi-currency totals, so report pages exercise
+        // the totals formatting (an array-cast column) rather than rendering empty.
+        \App\Models\BillingRun::create([
+            'municipality_id' => $municipality->id,
+            'run_number' => 'BR-SMOKE-0001',
+            'period_month' => now()->startOfMonth(),
+            'frequency' => 'monthly',
+            'status' => 'completed',
+            'invoice_count' => 2,
+            'currency_totals' => ['ZAR' => 1234.5, 'USD' => 67.0],
+            'run_at' => now(),
+        ]);
+
         $this->actingAs($user);
 
         $base = "/admin/{$municipality->id}";
@@ -30,6 +43,9 @@ class PanelSmokeTest extends TestCase
         $this->get("{$base}/tariffs")->assertSuccessful();
         $this->get("{$base}/areas")->assertSuccessful();
         $this->get("{$base}/billing-runs")->assertSuccessful();
+        $this->get("{$base}/billing-runs/create")->assertSuccessful();
+        $this->get("{$base}/pre-billing-report")->assertSuccessful();
+        $this->get("{$base}/post-billing-report")->assertSuccessful();
         $this->get("{$base}/invoices")->assertSuccessful();
         $this->get("{$base}/setup-wizard")->assertSuccessful();
     }

@@ -26,13 +26,12 @@ class ServiceType extends Model
 
     protected $fillable = [
         'municipality_id', 'name', 'code', 'billing_basis',
-        'unit_label', 'taxable', 'active',
+        'unit_label', 'active',
     ];
 
     protected function casts(): array
     {
         return [
-            'taxable' => 'boolean',
             'active' => 'boolean',
         ];
     }
@@ -42,7 +41,7 @@ class ServiceType extends Model
      * callers (seeders, the setup wizard) that create a type without explicit
      * variants; the Filament editor instead manages variants via a repeater.
      */
-    public function ensureDefaultService(): Service
+    public function ensureDefaultService(bool $taxable = true): Service
     {
         return $this->services()->firstOrCreate(
             ['is_default' => true],
@@ -50,6 +49,7 @@ class ServiceType extends Model
                 'municipality_id' => $this->municipality_id,
                 'name' => $this->name,
                 'code' => $this->code,
+                'taxable' => $taxable,
                 'active' => true,
             ],
         );

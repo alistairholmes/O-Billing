@@ -56,7 +56,6 @@ class SetupWizard extends Page
                     'name' => $s->name,
                     'code' => $s->code,
                     'billing_basis' => $s->billing_basis,
-                    'taxable' => $s->taxable,
                     'active' => $s->active,
                 ])->all(),
         ];
@@ -110,7 +109,6 @@ class SetupWizard extends Page
                                         ->options(ServiceType::billingBases())
                                         ->default(ServiceType::BASIS_FLAT)
                                         ->required(),
-                                    Toggle::make('taxable')->default(true)->inline(false),
                                     Toggle::make('active')->default(true)->inline(false),
                                 ])
                                 ->columns(2)
@@ -175,7 +173,6 @@ class SetupWizard extends Page
                         'name' => $row['name'],
                         'code' => $row['code'] ?? null,
                         'billing_basis' => $row['billing_basis'],
-                        'taxable' => (bool) ($row['taxable'] ?? true),
                         'active' => (bool) ($row['active'] ?? true),
                     ],
                 );

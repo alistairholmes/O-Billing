@@ -17,8 +17,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * customers subscribe to specific Services. A ServiceType with no real variants
  * carries a single default Service so it behaves like a plain service.
  *
- * Billing mechanics (billing_basis, taxable, unit_label) live on the parent
- * ServiceType and are inherited — variants differ only in their rate.
+ * Billing basis (billing_basis, unit_label) lives on the parent ServiceType and
+ * is inherited; taxability is set per service, since variants of the same group
+ * can differ. Variants otherwise differ only in their rate.
  */
 class Service extends Model
 {
@@ -27,13 +28,14 @@ class Service extends Model
 
     protected $fillable = [
         'municipality_id', 'service_type_id', 'name', 'code',
-        'is_default', 'active',
+        'is_default', 'taxable', 'active',
     ];
 
     protected function casts(): array
     {
         return [
             'is_default' => 'boolean',
+            'taxable' => 'boolean',
             'active' => 'boolean',
         ];
     }

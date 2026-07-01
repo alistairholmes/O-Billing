@@ -21,10 +21,17 @@ class BillingRunsTable
         return $table
             ->defaultSort('period_month', 'desc')
             ->columns([
+                TextColumn::make('run_number')
+                    ->label('Run #')
+                    ->searchable()
+                    ->sortable(),
                 TextColumn::make('period_month')
-                    ->label('Month')
+                    ->label('Period')
                     ->date('F Y')
                     ->sortable(),
+                TextColumn::make('frequency')
+                    ->badge()
+                    ->formatStateUsing(fn (string $state) => BillingRun::frequencies()[$state] ?? $state),
                 TextColumn::make('description')
                     ->limit(40)
                     ->toggleable(),
@@ -34,18 +41,9 @@ class BillingRunsTable
                 TextColumn::make('invoice_count')
                     ->label('Invoices')
                     ->badge(),
-                TextColumn::make('currency_totals')
+                TextColumn::make('total_billed')
                     ->label('Total billed')
-                    ->formatStateUsing(function ($state): string {
-                        $totals = is_array($state) ? $state : (json_decode((string) $state, true) ?: []);
-                        if ($totals === []) {
-                            return '—';
-                        }
-
-                        return collect($totals)
-                            ->map(fn ($amount, $currency) => Currencies::format($amount, $currency))
-                            ->implode('  •  ');
-                    }),
+                    ->state(fn (BillingRun $r) => $r->formattedCurrencyTotals()),
                 TextColumn::make('run_at')
                     ->label('Generated')
                     ->dateTime()
@@ -59,7 +57,7 @@ class BillingRunsTable
                     ->color('success')
                     ->requiresConfirmation()
                     ->modalHeading('Generate billing run')
-                    ->modalDescription('Creates an invoice for every active customer using the tariffs for their suburb, in their billing currency. Re-running replaces this run\'s existing invoices.')
+                    ->modalDescription('Creates invoices using the tariffs for each property\'s suburb, in their billing currency, honouring this run\'s scope (services, account range, location range) and frequency. Re-running replaces this run\'s existing invoices.')
                     ->action(function (BillingRun $record): void {
                         $result = app(BillingRunService::class)->generate($record);
 

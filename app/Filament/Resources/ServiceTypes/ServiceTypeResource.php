@@ -57,7 +57,6 @@ class ServiceTypeResource extends Resource
                     ->label('Unit label')
                     ->placeholder('e.g. bin, kL')
                     ->visible(fn ($get) => $get('billing_basis') === ServiceType::BASIS_PER_UNIT),
-                Toggle::make('taxable')->default(true),
                 Toggle::make('active')->default(true),
             ]);
     }
@@ -73,7 +72,6 @@ class ServiceTypeResource extends Resource
                     ->formatStateUsing(fn (string $state) => ServiceType::billingBases()[$state] ?? $state)
                     ->badge()
                     ->color('primary'),
-                IconColumn::make('taxable')->boolean(),
                 IconColumn::make('active')->boolean(),
                 TextColumn::make('services_count')->label('Services')->counts('services')->badge()->color('primary'),
                 TextColumn::make('tariffs_count')->label('Tariffs')->counts('tariffs')->badge(),

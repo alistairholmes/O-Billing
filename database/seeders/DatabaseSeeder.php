@@ -57,10 +57,13 @@ class DatabaseSeeder extends Seeder
         }
 
         // Two completed monthly runs so the dashboard has data on first login.
+        $seq = 0;
         foreach ([now()->startOfMonth()->subMonth(), now()->startOfMonth()] as $period) {
             $run = \App\Models\BillingRun::create([
                 'municipality_id' => $municipality->id,
+                'run_number' => sprintf('BR-%s-%04d', $period->format('Ym'), ++$seq),
                 'period_month' => $period,
+                'frequency' => 'monthly',
                 'description' => $period->format('F Y').' monthly run',
             ]);
 
@@ -193,6 +196,11 @@ class DatabaseSeeder extends Seeder
                         // A couple of Borrowdale accounts bill in ZWG.
                         $currency = ($suburbName === 'Borrowdale' && $i >= 4) ? 'ZWG' : 'USD';
 
+                        $propertyValue = $this->propertyValue($currency, $isBusiness);
+                        // Split the rateable value into land + improvements for the
+                        // valuation-roll fields (land ~40%, improvements ~60%).
+                        $landValue = (int) round($propertyValue * 0.4);
+
                         $customer = Customer::create([
                             'municipality_id' => $municipality->id,
                             'area_id' => $suburb->id,
@@ -200,7 +208,10 @@ class DatabaseSeeder extends Seeder
                             'name' => $isBusiness ? "{$suburbName} Traders (Pvt) Ltd" : "{$suburbName} Resident {$i}",
                             'type' => $isBusiness ? 'business' : 'residential',
                             'email' => strtolower(str_replace(' ', '', $suburbName))."{$i}@example.com",
-                            'property_value' => $this->propertyValue($currency, $isBusiness),
+                            'property_value' => $propertyValue,
+                            'land_size' => $isBusiness ? random_int(800, 4000) : random_int(200, 1000),
+                            'land_value' => $landValue,
+                            'improvement_value' => $propertyValue - $landValue,
                             'currency' => $currency,
                             'active' => true,
                         ]);

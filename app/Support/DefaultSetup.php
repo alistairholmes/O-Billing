@@ -43,12 +43,14 @@ final class DefaultSetup
 
         foreach (self::SERVICES as $service) {
             $variants = $service['variants'] ?? [];
-            unset($service['variants']);
+            // Taxability now lives on the service, not the group.
+            $taxable = $service['taxable'] ?? true;
+            unset($service['variants'], $service['taxable']);
 
             $type = ServiceType::create([...$service, 'municipality_id' => $municipality->id, 'active' => true]);
 
             if ($variants === []) {
-                $type->ensureDefaultService();
+                $type->ensureDefaultService($taxable);
 
                 continue;
             }
@@ -57,6 +59,7 @@ final class DefaultSetup
                 $type->services()->create([
                     ...$variant,
                     'municipality_id' => $municipality->id,
+                    'taxable' => $taxable,
                     'active' => true,
                 ]);
             }

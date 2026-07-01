@@ -22,13 +22,17 @@ class Customer extends Model
 
     protected $fillable = [
         'municipality_id', 'area_id', 'account_number', 'name', 'type',
-        'email', 'phone', 'address', 'property_value', 'currency', 'active',
+        'email', 'phone', 'address', 'property_value', 'land_size',
+        'land_value', 'improvement_value', 'currency', 'active',
     ];
 
     protected function casts(): array
     {
         return [
             'property_value' => 'decimal:2',
+            'land_size' => 'decimal:2',
+            'land_value' => 'decimal:2',
+            'improvement_value' => 'decimal:2',
             'active' => 'boolean',
         ];
     }

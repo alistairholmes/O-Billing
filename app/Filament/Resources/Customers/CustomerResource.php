@@ -79,7 +79,20 @@ class CustomerResource extends Resource
                         TextInput::make('property_value')
                             ->label('Property value')
                             ->numeric()
-                            ->helperText('Used for property-rates services.'),
+                            ->helperText('Rateable value used for property-rates services.'),
+                        TextInput::make('land_size')
+                            ->label('Land size')
+                            ->numeric()
+                            ->suffix('m²')
+                            ->helperText('Optional — from the valuation roll, if available.'),
+                        TextInput::make('land_value')
+                            ->label('Land value')
+                            ->numeric()
+                            ->helperText('Optional — site value, if available.'),
+                        TextInput::make('improvement_value')
+                            ->label('Improvement value')
+                            ->numeric()
+                            ->helperText('Optional — value of buildings/improvements, if available.'),
                     ]),
                 Section::make('Contact')
                     ->columns(2)
@@ -114,6 +127,16 @@ class CustomerResource extends Resource
                 TextColumn::make('type')->badge(),
                 TextColumn::make('property_value')
                     ->formatStateUsing(fn ($state, Customer $r) => $state ? Currencies::format($state, $r->currency) : '—'),
+                TextColumn::make('land_size')
+                    ->label('Land size')
+                    ->formatStateUsing(fn ($state) => $state ? number_format((float) $state, 0).' m²' : '—')
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('land_value')
+                    ->formatStateUsing(fn ($state, Customer $r) => $state ? Currencies::format($state, $r->currency) : '—')
+                    ->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('improvement_value')
+                    ->formatStateUsing(fn ($state, Customer $r) => $state ? Currencies::format($state, $r->currency) : '—')
+                    ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('currency')->badge(),
                 TextColumn::make('services_count')->label('Services')->counts('services')->badge()->color('primary'),
                 IconColumn::make('active')->boolean(),
