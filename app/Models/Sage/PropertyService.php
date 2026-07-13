@@ -7,38 +7,35 @@ namespace App\Models\Sage;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Sage `_ccg_EB_PropertyServices` — the link that says a property is billed for
- * a given service on a given tariff (and, for metered services, meter), to a
- * given customer. `Billable` flags whether it currently raises charges.
+ * Sage `_mtblPropertyPortionServices` — the link that says a property portion is
+ * billed for a given service on a given rate tariff (and, for metered services,
+ * meter). `bBillable` flags whether it currently raises charges.
  */
 class PropertyService extends SageModel
 {
-    protected $table = '_ccg_EB_PropertyServices';
+    protected $table = '_mtblPropertyPortionServices';
+
+    protected $primaryKey = 'idPropertyPortionServices';
 
     protected function casts(): array
     {
         return [
-            'Billable' => 'boolean',
+            'bBillable' => 'boolean',
         ];
     }
 
-    public function property(): BelongsTo
+    public function portion(): BelongsTo
     {
-        return $this->belongsTo(Property::class, 'PropertyID');
+        return $this->belongsTo(PropertyPortion::class, 'iPropertyPortionID', 'idPropertyPortions');
     }
 
     public function service(): BelongsTo
     {
-        return $this->belongsTo(Service::class, 'ServiceID');
+        return $this->belongsTo(Service::class, 'iPortionServiceID', 'ID');
     }
 
     public function tariff(): BelongsTo
     {
-        return $this->belongsTo(Tariff::class, 'TariffID');
-    }
-
-    public function customer(): BelongsTo
-    {
-        return $this->belongsTo(Client::class, 'CustomerID', 'DCLink');
+        return $this->belongsTo(Tariff::class, 'iServiceRateTariffID', 'idRateTariffs');
     }
 }

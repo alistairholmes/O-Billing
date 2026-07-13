@@ -62,7 +62,8 @@ class SageIntegrationTest extends TestCase
     {
         // SQL Server pagination needs an ORDER BY; the resources set defaultSort,
         // so a deep page must load without error and return a full page of rows.
-        $page2 = \App\Models\Sage\Property::query()->orderBy('ErfNumber')->paginate(25, ['*'], 'page', 2);
+        // Client is the large populated Sage table (the debtor ledger).
+        $page2 = \App\Models\Sage\Client::query()->orderBy('Account')->paginate(25, ['*'], 'page', 2);
 
         $this->assertSame(2, $page2->currentPage());
         $this->assertCount(25, $page2->items());
@@ -146,15 +147,16 @@ class SageIntegrationTest extends TestCase
 
         // Mounting the view action builds and fills its infolist schema; if any
         // entry referenced a broken relation it would throw here. assertOk()
-        // confirms the component (with the modal mounted) rendered cleanly.
-        $property = \App\Models\Sage\Property::query()->first();
-        \Livewire\Livewire::test(\App\Filament\Resources\Sage\Pages\ListProperties::class)
-            ->mountTableAction('view', $property->getKey())
+        // confirms the component (with the modal mounted) rendered cleanly. Client
+        // and Service are the populated Sage tables in this deployment.
+        $client = \App\Models\Sage\Client::query()->first();
+        \Livewire\Livewire::test(\App\Filament\Resources\Sage\Pages\ListClients::class)
+            ->mountTableAction('view', $client->getKey())
             ->assertOk();
 
-        $tariff = \App\Models\Sage\Tariff::query()->first();
-        \Livewire\Livewire::test(\App\Filament\Resources\Sage\Pages\ListTariffs::class)
-            ->mountTableAction('view', $tariff->getKey())
+        $service = \App\Models\Sage\Service::query()->first();
+        \Livewire\Livewire::test(\App\Filament\Resources\Sage\Pages\ListServiceGroups::class)
+            ->mountTableAction('view', $service->getKey())
             ->assertOk();
     }
 }

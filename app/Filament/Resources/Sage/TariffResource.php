@@ -29,17 +29,17 @@ class TariffResource extends SageResource
 
     protected static ?string $modelLabel = 'tariff';
 
-    protected static ?string $recordTitleAttribute = 'Name';
+    protected static ?string $recordTitleAttribute = 'cRateTariffDescription';
 
     public static function table(Table $table): Table
     {
         return $table
-            ->modifyQueryUsing(fn ($query) => $query->with(['service.group', 'billingTrCode']))
-            ->defaultSort('Name')
+            ->modifyQueryUsing(fn ($query) => $query->with(['service', 'billingTrCode']))
+            ->defaultSort('cRateTariff')
             ->columns([
-                TextColumn::make('Name')->searchable()->sortable(),
+                TextColumn::make('cRateTariff')->label('Code')->searchable()->sortable(),
+                TextColumn::make('cRateTariffDescription')->label('Tariff')->searchable()->sortable(),
                 TextColumn::make('service.Name')->label('Service')->sortable(),
-                TextColumn::make('service.group.Name')->label('Group')->toggleable(),
                 TextColumn::make('billingTrCode.Code')->label('GL code')->toggleable(),
                 TextColumn::make('bands_count')->label('Bands')->counts('bands')->badge()
                     ->color(fn ($state) => $state > 1 ? 'warning' : 'gray')
@@ -54,10 +54,9 @@ class TariffResource extends SageResource
     {
         return $schema->components([
             Section::make('Tariff')->columns(3)->schema([
-                TextEntry::make('Name'),
+                TextEntry::make('cRateTariff')->label('Code'),
+                TextEntry::make('cRateTariffDescription')->label('Tariff'),
                 TextEntry::make('service.Name')->label('Service'),
-                TextEntry::make('service.group.Name')->label('Group'),
-                TextEntry::make('Description')->placeholder('—')->columnSpanFull(),
                 TextEntry::make('billingTrCode.Code')->label('Billing GL code')->placeholder('—'),
                 TextEntry::make('billingTrCode.Tax')->label('Taxable')
                     ->badge()
@@ -69,16 +68,14 @@ class TariffResource extends SageResource
                 ->schema([
                     RepeatableEntry::make('bands')
                         ->hiddenLabel()
-                        ->columns(4)
+                        ->columns(3)
                         ->schema([
-                            TextEntry::make('BandEnd')->label('Up to (units)')
+                            TextEntry::make('fToValue')->label('Up to (units)')
                                 ->formatStateUsing(fn ($state) => (float) $state > 0 ? number_format((float) $state, 0) : 'Flat'),
-                            TextEntry::make('Rate')
+                            TextEntry::make('fBandAmount')->label('Rate')
                                 ->formatStateUsing(fn ($state) => Currencies::format($state, 'USD')),
                             TextEntry::make('fromPeriod.dPeriodDate')->label('Effective from')
                                 ->date('M Y')->placeholder('—'),
-                            TextEntry::make('CurrencyID')->label('Currency')
-                                ->formatStateUsing(fn ($state) => (int) $state === 2 ? 'ZAR' : 'USD'),
                         ]),
                 ]),
         ]);

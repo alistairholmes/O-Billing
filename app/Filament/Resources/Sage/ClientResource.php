@@ -43,7 +43,7 @@ class ClientResource extends SageResource
                 TextColumn::make('DCBalance')->label('Balance')->sortable()
                     ->formatStateUsing(fn ($state) => Currencies::format($state, 'USD'))
                     ->alignEnd(),
-                TextColumn::make('properties_count')->label('Properties')->counts('properties')->badge(),
+                TextColumn::make('portions_count')->label('Portions')->counts('portions')->badge(),
             ])
             ->recordActions([
                 ViewAction::make(),
@@ -65,24 +65,17 @@ class ClientResource extends SageResource
                 TextEntry::make('address')->label('Physical address')->columnSpan(2)
                     ->state(fn (Client $r) => $r->physicalAddress() ?: '—'),
             ]),
-            Section::make('Properties owned')->schema([
-                RepeatableEntry::make('properties')
+            Section::make('Property portions billed')->schema([
+                RepeatableEntry::make('portions')
                     ->hiddenLabel()
                     ->columns(3)
                     ->schema([
-                        TextEntry::make('ErfNumber')->label('Erf / stand'),
-                        TextEntry::make('area.Description')->label('Area')->placeholder('—'),
-                        TextEntry::make('MarketValue')->label('Market value')
-                            ->formatStateUsing(fn ($state) => Currencies::format($state, 'USD')),
+                        TextEntry::make('cPortion')->label('Portion'),
+                        TextEntry::make('property.cERFNo')->label('Erf / stand')->placeholder('—'),
+                        TextEntry::make('property.area.cAreaDescription')->label('Area')->placeholder('—'),
                     ]),
             ]),
         ]);
-    }
-
-    public static function getEloquentQuery(): \Illuminate\Database\Eloquent\Builder
-    {
-        // Only debtors that actually own a rateable property (the ratepayers).
-        return parent::getEloquentQuery()->whereHas('properties');
     }
 
     public static function getPages(): array

@@ -22,15 +22,15 @@ class AreaResource extends SageResource
 
     protected static ?string $modelLabel = 'area';
 
-    protected static ?string $recordTitleAttribute = 'Description';
+    protected static ?string $recordTitleAttribute = 'cAreaDescription';
 
     public static function table(Table $table): Table
     {
         return $table
-            ->defaultSort('Name')
+            ->defaultSort('cArea')
             ->columns([
-                TextColumn::make('Name')->label('Code')->searchable()->sortable(),
-                TextColumn::make('Description')->label('Area name')->searchable()->sortable(),
+                TextColumn::make('cArea')->label('Code')->searchable()->sortable(),
+                TextColumn::make('cAreaDescription')->label('Area name')->searchable()->sortable(),
                 TextColumn::make('properties_count')->label('Properties')->counts('properties')->badge()->color('primary'),
             ]);
     }

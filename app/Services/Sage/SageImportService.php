@@ -18,20 +18,27 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Imports the master data from a Sage Evolution (CCG Enterprise Billing) company
+ * Imports the master data from a Sage Evolution (CCG Municipal Billing) company
  * database — read through the `sage` connection — into O-Billing's own tables so
  * it appears in the normal Areas / Properties / Services / Tariffs / Billing Runs
  * screens and can be billed against.
  *
+ * This targets the `_mtbl*` municipal-billing schema (Regions → SubRegions → Areas,
+ * Properties → Portions → PortionServices, RateTariffs + Bands, BillingRuns +
+ * RunDetails). Service *definitions* still live in the shared `_ccg_EB_Services`
+ * table, so those are read from there.
+ *
  * The mapping (Sage → O-Billing), with the deliberate simplifications flagged as
  * warnings at the end of a run:
- *   • _ccg_EB_Regions/Districts/Areas → the area tree (Area is the billing level)
- *   • _ccg_EB_Properties + Client      → one Customer per property (account = Client.Account)
+ *   • _mtblRegions/_mtblSubRegions/_mtblAreas → the area tree (Area is the billing level)
+ *   • _mtblProperties + _mtblPropertyPortions + Client → one Customer per portion
+ *     (the billed consumer; account = Client.Account)
  *   • _ccg_EB_Services                 → ServiceType (billing basis from CalculationMethod)
- *   • _ccg_EB_Tariffs                  → Service variant (taxable from its TrCode)
- *   • _ccg_EB_TariffBands              → the rate (block tariffs use their first tier)
+ *   • _mtblRateTariffs                 → Service variant (taxable from its billing TrCode)
+ *   • _mtblRateTariffBands             → the rate (block tariffs use their first tier)
  *   • per (area, service) actually used → a Tariff row, so billing is self-consistent
- *   • _ccg_EB_BillingRuns              → BillingRun (metadata)
+ *   • _mtblBillingRuns                 → BillingRun (metadata)
+ *   • _mtblBillingRunDetails           → the invoices each run raised
  *
  * Re-running is safe and idempotent: areas key on a stable `sage_id`, customers on
  * their account number, services/types on a code, runs on their number; derived
@@ -57,11 +64,14 @@ final class SageImportService
     /** sage tariff ID => ['rate','tr_code','effective_from','bands']. */
     private array $tariffBase = [];
 
-    /** sage property ID => O-Billing customer ID. */
-    private array $propertyCustomerId = [];
+    /** sage portion ID => O-Billing customer ID. */
+    private array $portionCustomerId = [];
 
-    /** sage property ID => account number (for invoice numbers). */
-    private array $propertyAccount = [];
+    /** sage portion ID => account number (for invoice numbers). */
+    private array $portionAccount = [];
+
+    /** sage portion-service ID => ['portion' => sage portion ID, 'tariff' => sage rate-tariff ID]. */
+    private array $portionServiceMap = [];
 
     /** sage billing-run ID => ['id' => O-Billing run id, 'number' => ..., 'period' => Carbon]. */
     private array $runMap = [];
@@ -105,11 +115,11 @@ final class SageImportService
 
     private function importMunicipality(): Municipality
     {
-        $muni = Municipality::firstOrNew(['code' => 'PTC']);
+        $muni = Municipality::firstOrNew(['code' => config('sage.municipality.code')]);
         $muni->fill([
             // The Sage company is named after its dataset ("… NCOA"); use the clean
             // council name, but never clobber a name the user has since set.
-            'name' => $muni->name ?: 'Plumtree Town Council',
+            'name' => $muni->name ?: config('sage.municipality.name'),
             'base_currency' => 'USD',
             'supported_currencies' => ['USD'],
             'tax_label' => 'VAT',
@@ -142,24 +152,25 @@ final class SageImportService
         $this->currencies = DB::connection(self::SAGE)->table('Currency')
             ->pluck('CurrencyCode', 'CurrencyLink')->all();
 
-        $this->categories = DB::connection(self::SAGE)->table('_ccg_EB_Categories')
-            ->pluck('Name', 'ID')->all();
+        $this->categories = DB::connection(self::SAGE)->table('_mtblCategories')
+            ->pluck('cCategoryDescription', 'idCategory')->all();
 
-        // The rate for each tariff = its lowest band (first tier for block tariffs).
-        $bands = DB::connection(self::SAGE)->table('_ccg_EB_TariffBands')
-            ->select('TariffID', 'BandEnd', 'Rate', 'FromPeriodID', 'CurrencyID')
-            ->orderBy('TariffID')->orderBy('BandEnd')->get();
+        // The rate for each tariff = its lowest band (first tier for block tariffs),
+        // ordered by the band's upper bound (fToValue).
+        $bands = DB::connection(self::SAGE)->table('_mtblRateTariffBands')
+            ->select('iRateTariffID', 'fToValue', 'fBandAmount', 'iFromPeriodID')
+            ->orderBy('iRateTariffID')->orderBy('fToValue')->get();
 
         $bandCounts = [];
         foreach ($bands as $b) {
-            $bandCounts[$b->TariffID] = ($bandCounts[$b->TariffID] ?? 0) + 1;
-            if (isset($this->tariffBase[$b->TariffID])) {
+            $bandCounts[$b->iRateTariffID] = ($bandCounts[$b->iRateTariffID] ?? 0) + 1;
+            if (isset($this->tariffBase[$b->iRateTariffID])) {
                 continue; // already have the lowest band
             }
-            $trCode = $this->trCodes[$this->tariffTrCode((int) $b->TariffID)] ?? null;
-            $periodDate = $this->periods[$b->FromPeriodID] ?? null;
-            $this->tariffBase[$b->TariffID] = [
-                'rate' => (float) $b->Rate,
+            $trCode = $this->trCodes[$this->tariffTrCode((int) $b->iRateTariffID)] ?? null;
+            $periodDate = $this->periods[$b->iFromPeriodID] ?? null;
+            $this->tariffBase[$b->iRateTariffID] = [
+                'rate' => (float) $b->fBandAmount,
                 'tr_code' => $trCode->Code ?? null,
                 'effective_from' => $periodDate ? Carbon::parse($periodDate)->startOfMonth() : null,
             ];
@@ -171,12 +182,12 @@ final class SageImportService
         }
     }
 
-    /** Resolve a tariff's billing TrCode id (cached from the tariffs table). */
+    /** Resolve a rate tariff's billing TrCode id (cached from the rate-tariffs table). */
     private function tariffTrCode(int $tariffId): int
     {
         static $map = null;
-        $map ??= DB::connection(self::SAGE)->table('_ccg_EB_Tariffs')
-            ->pluck('BillingTrCodeID', 'ID')->all();
+        $map ??= DB::connection(self::SAGE)->table('_mtblRateTariffs')
+            ->pluck('iBillTrCodeID', 'idRateTariffs')->all();
 
         return (int) ($map[$tariffId] ?? 0);
     }
@@ -184,35 +195,36 @@ final class SageImportService
     private function importAreas(): void
     {
         $regionType = $this->areaType(1, 'Region', false);
-        $districtType = $this->areaType(2, 'District', false);
+        $subRegionType = $this->areaType(2, 'Sub-Region', false);
         $areaType = $this->areaType(3, 'Area', true);
 
         // Region(s) — the tree root.
         $rootId = null;
-        foreach (DB::connection(self::SAGE)->table('_ccg_EB_Regions')->get() as $r) {
-            $area = $this->upsertArea("region:{$r->ID}", $regionType->id, null, $r->Name ?: 'Region', $r->Code ?? null);
+        foreach (DB::connection(self::SAGE)->table('_mtblRegions')->get() as $r) {
+            $area = $this->upsertArea("region:{$r->idRegions}", $regionType->id, null, $r->cRegionDescription ?: $r->cRegion, $r->cRegion);
             $rootId ??= $area->id;
         }
-        $rootId ??= $this->upsertArea('region:root', $regionType->id, null, 'Plumtree Town Council', null)->id;
+        $rootId ??= $this->upsertArea('region:root', $regionType->id, null, config('sage.municipality.name'), null)->id;
 
-        // District(s) under the root region.
-        $districtParent = $rootId;
-        foreach (DB::connection(self::SAGE)->table('_ccg_EB_Districts')->get() as $d) {
-            $area = $this->upsertArea("district:{$d->ID}", $districtType->id, $rootId, $d->Name ?: 'District', null);
-            $districtParent = $area->id;
+        // Sub-region(s) under the root region. (The _mtbl schema scopes properties by
+        // region/sub-region/area independently, so the tree is nested under the root.)
+        $subRegionParent = $rootId;
+        foreach (DB::connection(self::SAGE)->table('_mtblSubRegions')->get() as $d) {
+            $area = $this->upsertArea("subregion:{$d->idSubRegions}", $subRegionType->id, $rootId, $d->cSubRegionDescription ?: $d->cSubRegion, $d->cSubRegion);
+            $subRegionParent = $area->id;
         }
 
-        // Billing-level areas (suburbs).
+        // Billing-level areas (suburbs/wards).
         $areas = 0;
-        foreach (DB::connection(self::SAGE)->table('_ccg_EB_Areas')->get() as $a) {
-            $this->sageAreaToObilling[$a->ID] = $this->upsertArea(
-                "area:{$a->ID}", $areaType->id, $districtParent, $a->Description ?: $a->Name, $a->Name
+        foreach (DB::connection(self::SAGE)->table('_mtblAreas')->get() as $a) {
+            $this->sageAreaToObilling[$a->idAreas] = $this->upsertArea(
+                "area:{$a->idAreas}", $areaType->id, $subRegionParent, $a->cAreaDescription ?: $a->cArea, $a->cArea
             )->id;
             $areas++;
         }
 
         // Catch-all for the handful of properties without an area.
-        $this->fallbackAreaId = $this->upsertArea('area:unknown', $areaType->id, $districtParent, '(Unknown Area)', null)->id;
+        $this->fallbackAreaId = $this->upsertArea('area:unknown', $areaType->id, $subRegionParent, '(Unknown Area)', null)->id;
 
         $this->counts['areas'] = $areas;
     }
@@ -240,39 +252,42 @@ final class SageImportService
 
     private function importServices(): void
     {
-        $groups = DB::connection(self::SAGE)->table('_ccg_EB_ServiceGroups')->pluck('Name', 'ID')->all();
+        // Service *definitions* still live in the shared _ccg_EB_Services table; the
+        // _mtbl schema has no service-groups table, so billing basis is derived from
+        // the calculation method and the service name alone.
 
         // Sage Service → O-Billing ServiceType (carries the billing basis).
         foreach (DB::connection(self::SAGE)->table('_ccg_EB_Services')->get() as $s) {
             $type = ServiceType::firstOrNew(['municipality_id' => $this->municipalityId, 'code' => "SVC-{$s->ID}"]);
             $type->fill([
                 'name' => $s->Name,
-                'billing_basis' => $this->mapBasis((int) $s->CalculationMethod, $groups[$s->ServiceGroupID] ?? '', (string) $s->Name),
+                'billing_basis' => $this->mapBasis((int) $s->CalculationMethod, '', (string) $s->Name),
                 'unit_label' => $s->MeasurableUnit ?: null,
                 'active' => true,
             ])->save();
             $this->serviceTypeMap[$s->ID] = $type->id;
         }
 
-        // Sage Tariff → O-Billing Service (priced variant under its type).
+        // Sage Rate Tariff → O-Billing Service (priced variant under its type).
         $variantsByType = [];
-        foreach (DB::connection(self::SAGE)->table('_ccg_EB_Tariffs')->get() as $t) {
-            $typeId = $this->serviceTypeMap[$t->ServiceID] ?? null;
+        foreach (DB::connection(self::SAGE)->table('_mtblRateTariffs')->get() as $t) {
+            $typeId = $this->serviceTypeMap[$t->iRateTariffServiceID] ?? null;
+            $name = $t->cRateTariffDescription ?: $t->cRateTariff;
             if ($typeId === null) {
-                $this->warnings[] = "Tariff '{$t->Name}' skipped: its Sage service #{$t->ServiceID} was not found.";
+                $this->warnings[] = "Rate tariff '{$name}' skipped: its Sage service #{$t->iRateTariffServiceID} was not found.";
 
                 continue;
             }
-            $trCode = $this->trCodes[(int) $t->BillingTrCodeID] ?? null;
-            $service = Service::firstOrNew(['municipality_id' => $this->municipalityId, 'code' => "TRF-{$t->ID}"]);
+            $trCode = $this->trCodes[(int) $t->iBillTrCodeID] ?? null;
+            $service = Service::firstOrNew(['municipality_id' => $this->municipalityId, 'code' => "TRF-{$t->idRateTariffs}"]);
             $service->fill([
                 'service_type_id' => $typeId,
-                'name' => $t->Name,
+                'name' => $name,
                 'taxable' => $trCode ? (bool) $trCode->Tax : true,
                 'is_default' => false,
                 'active' => true,
             ])->save();
-            $this->serviceMap[$t->ID] = $service->id;
+            $this->serviceMap[$t->idRateTariffs] = $service->id;
             $variantsByType[$typeId] = true;
         }
 
@@ -311,10 +326,11 @@ final class SageImportService
     {
         Tariff::where('municipality_id', $this->municipalityId)->delete();
 
-        $combos = DB::connection(self::SAGE)->table('_ccg_EB_PropertyServices as ps')
-            ->join('_ccg_EB_Properties as p', 'p.ID', '=', 'ps.PropertyID')
-            ->where('ps.Billable', 1)->whereNotNull('ps.TariffID')
-            ->select('p.AreaID', 'ps.TariffID')->distinct()->get();
+        $combos = DB::connection(self::SAGE)->table('_mtblPropertyPortionServices as ps')
+            ->join('_mtblPropertyPortions as pp', 'pp.idPropertyPortions', '=', 'ps.iPropertyPortionID')
+            ->join('_mtblProperties as p', 'p.idProperty', '=', 'pp.iPortionPropertyID')
+            ->where('ps.bBillable', 1)->whereNotNull('ps.iServiceRateTariffID')
+            ->select('p.iPropertyAreaID as AreaID', 'ps.iServiceRateTariffID as TariffID')->distinct()->get();
 
         $now = now();
         $rows = [];
@@ -352,12 +368,17 @@ final class SageImportService
 
     private function importCustomers(): void
     {
-        $props = DB::connection(self::SAGE)->table('_ccg_EB_Properties as p')
-            ->leftJoin('Client as c', 'c.DCLink', '=', 'p.OwnerID')
+        // A customer is a billed consumer on a property portion. Portion carries the
+        // consumer (→ Client account) and its own valuation; the property carries the
+        // area and address.
+        $portions = DB::connection(self::SAGE)->table('_mtblPropertyPortions as pp')
+            ->join('_mtblProperties as p', 'p.idProperty', '=', 'pp.iPortionPropertyID')
+            ->leftJoin('Client as c', 'c.DCLink', '=', 'pp.iPortionConsumerID')
             ->select(
-                'p.ID', 'p.AreaID', 'p.RatingID', 'p.UsageID',
-                'p.MarketValue', 'p.LandValue', 'p.ImprovementValue', 'p.LandSize',
-                'p.AddressLine1', 'p.AddressLine2', 'p.AddressLine3', 'p.AddressLine4', 'p.AddressLine5',
+                'pp.idPropertyPortions as PortionID', 'pp.iPortionRatingID', 'pp.iPortionUsageID',
+                'pp.fPortionSize', 'pp.fPortionLandValue', 'pp.fPortionImprovementValue',
+                'p.iPropertyAreaID as AreaID', 'p.fLandSize', 'p.fLandValue', 'p.fImprovementValue',
+                'p.cAddress1', 'p.cAddress2', 'p.cAddress3', 'p.cAddress4', 'p.cAddress5',
                 'c.Account', 'c.Name', 'c.EMail', 'c.Telephone',
                 'c.Physical1', 'c.Physical2', 'c.Physical3', 'c.Physical4', 'c.Physical5', 'c.iCurrencyID'
             )->get();
@@ -365,23 +386,28 @@ final class SageImportService
         $now = now();
         $rows = [];
         $usedAccounts = [];
-        $propAccount = [];
-        foreach ($props as $p) {
-            $account = trim((string) $p->Account) ?: ('ERF-'.$p->ID);
+        $portionAccount = [];
+        foreach ($portions as $p) {
+            $account = trim((string) $p->Account) ?: ('PORT-'.$p->PortionID);
             if (isset($usedAccounts[$account])) {
-                $account .= '-'.$p->ID; // guarantee uniqueness (shouldn't trigger: owners are 1:1)
+                $account .= '-'.$p->PortionID; // one client can hold several portions
             }
             $usedAccounts[$account] = true;
-            $propAccount[$p->ID] = $account;
+            $portionAccount[$p->PortionID] = $account;
 
             $areaId = $p->AreaID !== null
                 ? ($this->sageAreaToObilling[$p->AreaID] ?? $this->fallbackAreaId)
                 : $this->fallbackAreaId;
 
-            $catName = $this->categories[$p->RatingID] ?? $this->categories[$p->UsageID] ?? '';
+            $catName = $this->categories[$p->iPortionRatingID] ?? $this->categories[$p->iPortionUsageID] ?? '';
             $address = $this->joinNonEmpty([
-                $p->AddressLine1, $p->AddressLine2, $p->AddressLine3, $p->AddressLine4, $p->AddressLine5,
+                $p->cAddress1, $p->cAddress2, $p->cAddress3, $p->cAddress4, $p->cAddress5,
             ]) ?: $this->joinNonEmpty([$p->Physical1, $p->Physical2, $p->Physical3, $p->Physical4, $p->Physical5]);
+
+            // Prefer the portion's own valuation, falling back to the property's.
+            $landValue = $this->num($p->fPortionLandValue) ?? $this->num($p->fLandValue);
+            $improvementValue = $this->num($p->fPortionImprovementValue) ?? $this->num($p->fImprovementValue);
+            $propertyValue = ($landValue ?? 0) + ($improvementValue ?? 0) ?: null;
 
             $rows[] = [
                 'municipality_id' => $this->municipalityId,
@@ -392,10 +418,10 @@ final class SageImportService
                 'email' => $p->EMail ?: null,
                 'phone' => $p->Telephone ?: null,
                 'address' => $address ?: null,
-                'property_value' => $this->num($p->MarketValue),
-                'land_size' => $this->num($p->LandSize),
-                'land_value' => $this->num($p->LandValue),
-                'improvement_value' => $this->num($p->ImprovementValue),
+                'property_value' => $propertyValue,
+                'land_size' => $this->num($p->fPortionSize) ?? $this->num($p->fLandSize),
+                'land_value' => $landValue,
+                'improvement_value' => $improvementValue,
                 'currency' => $this->currencies[$p->iCurrencyID] ?? 'USD',
                 'active' => true,
                 'created_at' => $now,
@@ -417,28 +443,34 @@ final class SageImportService
 
         $this->counts['customers'] = $accountId->count();
 
-        // Remember property → customer / account for the invoice import.
-        $this->propertyAccount = $propAccount;
-        foreach ($propAccount as $propertyId => $account) {
-            $this->propertyCustomerId[$propertyId] = $accountId[$account] ?? null;
+        // Remember portion → customer / account for the invoice import.
+        $this->portionAccount = $portionAccount;
+        foreach ($portionAccount as $portionId => $account) {
+            $this->portionCustomerId[$portionId] = $accountId[$account] ?? null;
         }
 
-        $this->importSubscriptions($propAccount, $accountId, $now);
+        $this->importSubscriptions($portionAccount, $accountId, $now);
     }
 
-    /** Rebuild the customer↔service links from Sage's billable property services. */
-    private function importSubscriptions(array $propAccount, \Illuminate\Support\Collection $accountId, Carbon $now): void
+    /** Rebuild the customer↔service links from Sage's billable portion services. */
+    private function importSubscriptions(array $portionAccount, \Illuminate\Support\Collection $accountId, Carbon $now): void
     {
-        $ps = DB::connection(self::SAGE)->table('_ccg_EB_PropertyServices')
-            ->where('Billable', 1)->whereNotNull('TariffID')
-            ->select('PropertyID', 'TariffID')->get();
+        $ps = DB::connection(self::SAGE)->table('_mtblPropertyPortionServices')
+            ->where('bBillable', 1)->whereNotNull('iServiceRateTariffID')
+            ->select('idPropertyPortionServices', 'iPropertyPortionID', 'iServiceRateTariffID')->get();
 
         $pivot = [];
         $seen = [];
         foreach ($ps as $row) {
-            $account = $propAccount[$row->PropertyID] ?? null;
+            // Remember the portion-service → portion / tariff chain for invoice import.
+            $this->portionServiceMap[$row->idPropertyPortionServices] = [
+                'portion' => $row->iPropertyPortionID,
+                'tariff' => $row->iServiceRateTariffID,
+            ];
+
+            $account = $portionAccount[$row->iPropertyPortionID] ?? null;
             $customerId = $account !== null ? ($accountId[$account] ?? null) : null;
-            $serviceId = $this->serviceMap[$row->TariffID] ?? null;
+            $serviceId = $this->serviceMap[$row->iServiceRateTariffID] ?? null;
             if ($customerId === null || $serviceId === null) {
                 continue;
             }
@@ -479,31 +511,44 @@ final class SageImportService
     private function importBillingRuns(): void
     {
         $count = 0;
-        foreach (DB::connection(self::SAGE)->table('_ccg_EB_BillingRuns')->get() as $r) {
-            $periodDate = $this->periods[$r->PeriodID] ?? null;
+        foreach (DB::connection(self::SAGE)->table('_mtblBillingRuns')->get() as $r) {
+            $periodDate = $this->periods[$r->iBillingRunPeriodID] ?? null;
             $periodMonth = $periodDate ? Carbon::parse($periodDate)->startOfMonth() : now()->startOfMonth();
-            $run = BillingRun::firstOrNew(['municipality_id' => $this->municipalityId, 'run_number' => $r->Number]);
+            $number = $r->cBillingRunNumber ?: ('RUN-'.$r->idBillingRun);
+            $run = BillingRun::firstOrNew(['municipality_id' => $this->municipalityId, 'run_number' => $number]);
             $run->fill([
                 'period_month' => $periodMonth,
-                'frequency' => 'monthly',
+                'frequency' => $this->mapFrequency($r),
                 'description' => 'Imported from Sage',
-                'status' => $r->Processed ? 'completed' : 'draft',
-                'run_at' => $r->ProcessedDate ? Carbon::parse($r->ProcessedDate) : null,
+                'status' => $r->bBillingRunProcessed ? 'completed' : 'draft',
+                'run_at' => $r->iSysDateProcessed ? Carbon::parse($r->iSysDateProcessed) : null,
                 'invoice_count' => 0,
             ])->save();
-            $this->runMap[$r->ID] = ['id' => $run->id, 'number' => $r->Number, 'period' => $periodMonth];
+            $this->runMap[$r->idBillingRun] = ['id' => $run->id, 'number' => $number, 'period' => $periodMonth];
             $count++;
         }
 
         $this->counts['billing_runs'] = $count;
     }
 
+    /** Map a Sage billing run's rate-frequency flags to an O-Billing frequency. */
+    private function mapFrequency(object $r): string
+    {
+        return match (true) {
+            (bool) ($r->bBillAnnuallyRates ?? false) => 'annually',
+            (bool) ($r->bBillQuarterlyRates ?? false) => 'quarterly',
+            default => 'monthly',
+        };
+    }
+
     /**
-     * Import the invoices each billing run raised. Sage keeps one billing
-     * transaction per property/service line, so we group them by property within
-     * a run — each group is that customer's invoice for the period — and copy the
-     * real billed amounts into O-Billing's invoices + invoice_lines. Fully
-     * Sage-derived, so wiped and rebuilt on every run.
+     * Import the invoices each billing run raised. Sage keeps one billing-run detail
+     * per portion-service line, so we resolve each line back to its portion (the
+     * customer) and group them by portion within a run — each group is that
+     * customer's invoice for the period — copying the real billed amounts into
+     * O-Billing's invoices + invoice_lines. Fully Sage-derived, so wiped and rebuilt
+     * on every run. (Run details carry no currency/date, so the run's period is used
+     * and amounts are treated as the municipality's base currency.)
      */
     private function importInvoices(): void
     {
@@ -516,41 +561,52 @@ final class SageImportService
         $totalLines = 0;
 
         foreach ($this->runMap as $sageRunId => $run) {
-            $txns = DB::connection(self::SAGE)->table('_ccg_EB_BillingTransactions')
-                ->where('BillingRunID', $sageRunId)
-                ->select('PropertyID', 'TariffID', 'TrCodeID', 'Description', 'Units', 'Rate',
-                    'ExclusiveAmount', 'TaxAmount', 'InclusiveAmount', 'TransactionDate', 'CurrencyID')
-                ->orderBy('PropertyID')->get();
+            $details = DB::connection(self::SAGE)->table('_mtblBillingRunDetails')
+                ->where('iBillingRunID', $sageRunId)
+                ->select('iPropertyPortionServiceID', 'cDescription', 'fUnits',
+                    'fExclusive', 'fTaxAmount', 'fInclusive')
+                ->get();
+
+            // Resolve each detail's owning portion up front so we can group by it.
+            $byPortion = [];
+            foreach ($details as $d) {
+                $ps = $this->portionServiceMap[$d->iPropertyPortionServiceID] ?? null;
+                if ($ps === null) {
+                    continue; // line on a portion-service we didn't import
+                }
+                $byPortion[$ps['portion']][] = [$d, $ps['tariff']];
+            }
 
             $headers = [];          // invoice_number => header row
             $linesByInvoice = [];   // invoice_number => list of line rows
             $runTotal = 0.0;
 
-            foreach ($txns->groupBy('PropertyID') as $propertyId => $rows) {
-                $customerId = $this->propertyCustomerId[$propertyId] ?? null;
+            foreach ($byPortion as $portionId => $rows) {
+                $customerId = $this->portionCustomerId[$portionId] ?? null;
                 if ($customerId === null) {
-                    continue; // charge on a property we didn't import
+                    continue; // charge on a portion we didn't import
                 }
-                $invoiceNumber = $run['number'].'-'.($this->propertyAccount[$propertyId] ?? $propertyId);
+                $invoiceNumber = $run['number'].'-'.($this->portionAccount[$portionId] ?? $portionId);
 
                 $subtotal = $tax = $total = 0.0;
                 $currency = 'USD';
                 $issuedAt = null;
                 $lines = [];
-                foreach ($rows as $t) {
-                    $subtotal += (float) $t->ExclusiveAmount;
-                    $tax += (float) $t->TaxAmount;
-                    $total += (float) $t->InclusiveAmount;
-                    $currency = $this->currencies[$t->CurrencyID] ?? 'USD';
-                    $issuedAt ??= ($t->TransactionDate ? Carbon::parse($t->TransactionDate) : null);
+                foreach ($rows as [$t, $sageTariff]) {
+                    $units = (float) $t->fUnits;
+                    $exclusive = (float) $t->fExclusive;
+                    $subtotal += $exclusive;
+                    $tax += (float) $t->fTaxAmount;
+                    $total += (float) $t->fInclusive;
+                    $base = $this->tariffBase[$sageTariff] ?? null;
                     $lines[] = [
-                        'service_id' => $this->serviceMap[$t->TariffID] ?? null,
-                        'tr_code' => $this->trCodes[(int) $t->TrCodeID]->Code ?? null,
-                        'description' => mb_substr(trim((string) $t->Description), 0, 255) ?: 'Charge',
-                        'quantity' => (float) $t->Units,
-                        'unit_amount' => (float) $t->Rate,
-                        'amount' => (float) $t->ExclusiveAmount,
-                        'tax_amount' => (float) $t->TaxAmount,
+                        'service_id' => $this->serviceMap[$sageTariff] ?? null,
+                        'tr_code' => $base['tr_code'] ?? null,
+                        'description' => mb_substr(trim((string) $t->cDescription), 0, 255) ?: 'Charge',
+                        'quantity' => $units,
+                        'unit_amount' => $units != 0.0 ? round($exclusive / $units, 4) : $exclusive,
+                        'amount' => $exclusive,
+                        'tax_amount' => (float) $t->fTaxAmount,
                         'created_at' => $now,
                         'updated_at' => $now,
                     ];

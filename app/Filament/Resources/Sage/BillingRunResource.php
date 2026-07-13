@@ -28,19 +28,19 @@ class BillingRunResource extends SageResource
 
     protected static ?string $modelLabel = 'billing run';
 
-    protected static ?string $recordTitleAttribute = 'Number';
+    protected static ?string $recordTitleAttribute = 'cBillingRunNumber';
 
     public static function table(Table $table): Table
     {
         return $table
             ->modifyQueryUsing(fn ($query) => $query->with('period'))
-            ->defaultSort('ID', 'desc')
+            ->defaultSort('idBillingRun', 'desc')
             ->columns([
-                TextColumn::make('Number')->searchable()->sortable(),
+                TextColumn::make('cBillingRunNumber')->label('Number')->searchable()->sortable(),
                 TextColumn::make('period.dPeriodDate')->label('Period')->date('F Y')->sortable(),
-                IconColumn::make('Processed')->boolean(),
-                TextColumn::make('ProcessedDate')->label('Processed on')->dateTime('d M Y')->placeholder('—'),
-                TextColumn::make('ProcessedByUser')->label('Processed by')->placeholder('—')->toggleable(),
+                IconColumn::make('bBillingRunProcessed')->label('Processed')->boolean(),
+                TextColumn::make('iSysDateProcessed')->label('Processed on')->dateTime('d M Y')->placeholder('—'),
+                TextColumn::make('cUserNameProcessed')->label('Processed by')->placeholder('—')->toggleable(),
             ])
             ->recordActions([
                 ViewAction::make(),
@@ -51,16 +51,16 @@ class BillingRunResource extends SageResource
     {
         return $schema->components([
             Section::make('Billing run')->columns(3)->schema([
-                TextEntry::make('Number'),
+                TextEntry::make('cBillingRunNumber')->label('Number'),
                 TextEntry::make('period.dPeriodDate')->label('Period')->date('F Y'),
-                TextEntry::make('Processed')->badge()
+                TextEntry::make('bBillingRunProcessed')->label('Status')->badge()
                     ->formatStateUsing(fn ($state) => $state ? 'Processed' : 'Draft')
                     ->color(fn ($state) => $state ? 'success' : 'warning'),
-                TextEntry::make('SavedDate')->label('Saved on')->dateTime('d M Y H:i')->placeholder('—'),
-                TextEntry::make('ProcessedDate')->label('Processed on')->dateTime('d M Y H:i')->placeholder('—'),
-                TextEntry::make('ProcessedByUser')->label('Processed by')->placeholder('—'),
-                TextEntry::make('CalculatedByUser')->label('Calculated by')->placeholder('—'),
-                TextEntry::make('SavedByUser')->label('Saved by')->placeholder('—'),
+                TextEntry::make('dBillingCycleDate')->label('Billing cycle date')->dateTime('d M Y')->placeholder('—'),
+                TextEntry::make('iSysDateCalculated')->label('Calculated on')->dateTime('d M Y H:i')->placeholder('—'),
+                TextEntry::make('iSysDateProcessed')->label('Processed on')->dateTime('d M Y H:i')->placeholder('—'),
+                TextEntry::make('cUserNameCalculated')->label('Calculated by')->placeholder('—'),
+                TextEntry::make('cUserNameProcessed')->label('Processed by')->placeholder('—'),
             ]),
         ]);
     }

@@ -7,30 +7,32 @@ namespace App\Models\Sage;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Sage `_ccg_EB_TariffBands` — one consumption/period band of a tariff, holding
- * the `Rate`, the block ceiling `BandEnd`, the effective period range and the
- * currency. Flat charges have a single band (BandEnd 0); block water tariffs
+ * Sage `_mtblRateTariffBands` — one consumption/period band of a rate tariff,
+ * holding the `fBandAmount` (the rate), the block ceiling `fToValue` and the
+ * effective-from period. Flat charges have a single band; block water tariffs
  * have several rising bands.
  */
 class TariffBand extends SageModel
 {
-    protected $table = '_ccg_EB_TariffBands';
+    protected $table = '_mtblRateTariffBands';
+
+    protected $primaryKey = 'idRateTariffBands';
 
     protected function casts(): array
     {
         return [
-            'Rate' => 'float',
-            'BandEnd' => 'float',
+            'fBandAmount' => 'float',
+            'fToValue' => 'float',
         ];
     }
 
     public function tariff(): BelongsTo
     {
-        return $this->belongsTo(Tariff::class, 'TariffID');
+        return $this->belongsTo(Tariff::class, 'iRateTariffID', 'idRateTariffs');
     }
 
     public function fromPeriod(): BelongsTo
     {
-        return $this->belongsTo(Period::class, 'FromPeriodID');
+        return $this->belongsTo(Period::class, 'iFromPeriodID', 'idPeriod');
     }
 }

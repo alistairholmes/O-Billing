@@ -24,9 +24,9 @@ class Client extends SageModel
         ];
     }
 
-    public function properties(): HasMany
+    public function portions(): HasMany
     {
-        return $this->hasMany(Property::class, 'OwnerID', 'DCLink');
+        return $this->hasMany(PropertyPortion::class, 'iPortionConsumerID', 'DCLink');
     }
 
     /** The concatenated physical address lines, blanks removed. */
