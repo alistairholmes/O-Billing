@@ -94,7 +94,7 @@ final class SageLedgerImportService
             'active' => true,
         ]);
         if (! $muni->exists) {
-            $muni->tax_rate = 0.15;
+            $muni->tax_rate = 0.155; // matches the Sage company's Output Tax rate
         }
         $muni->setup_completed_at ??= now();
         $muni->save();

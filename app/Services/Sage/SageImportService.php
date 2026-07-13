@@ -126,9 +126,9 @@ final class SageImportService
             'active' => true,
         ]);
         // Only set a default tax rate on first import; never clobber a value the
-        // user has since configured. (Zimbabwe standard VAT is 15%.)
+        // user has since configured. (Zimbabwe VAT: 15.5%.)
         if (! $muni->exists) {
-            $muni->tax_rate = 0.15;
+            $muni->tax_rate = 0.155;
         }
         $muni->setup_completed_at ??= now();
         $muni->save();

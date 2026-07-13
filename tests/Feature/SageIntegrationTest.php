@@ -159,4 +159,56 @@ class SageIntegrationTest extends TestCase
             ->mountTableAction('view', $service->getKey())
             ->assertOk();
     }
+
+    public function test_billing_run_poster_preview_resolves_sage_accounts_without_writing(): void
+    {
+        [$muni] = $this->tenantUser();
+
+        app(\App\Support\Tenancy\CurrentMunicipality::class)->runFor($muni->id, function () use ($muni): void {
+            $areaType = \App\Models\AreaType::create([
+                'municipality_id' => $muni->id, 'name' => 'Ward', 'level' => 1, 'is_billing_level' => true,
+            ]);
+            $ward = \App\Models\Area::create([
+                'municipality_id' => $muni->id, 'area_type_id' => $areaType->id, 'name' => 'Njelele Plots',
+            ]);
+            $type = \App\Models\ServiceType::create([
+                'municipality_id' => $muni->id, 'name' => 'Assessment Rates', 'code' => 'LEDGER-ASSR',
+                'billing_basis' => 'flat', 'default_frequency' => 'annually', 'active' => true,
+            ]);
+            $service = $type->ensureDefaultService();
+
+            // PLT006 exists in the live Sage ledger as PLT006-ASSR-… (read-only lookup).
+            $customer = \App\Models\Customer::create([
+                'municipality_id' => $muni->id, 'area_id' => $ward->id, 'account_number' => 'PLT006',
+                'name' => 'Josiah Tanyara', 'type' => 'residential', 'currency' => 'USD', 'active' => true,
+            ]);
+            $run = \App\Models\BillingRun::create([
+                'municipality_id' => $muni->id, 'run_number' => 'BR-POST-TEST', 'period_month' => now()->startOfMonth(),
+                'frequency' => 'annually', 'status' => 'completed',
+            ]);
+            $invoice = \App\Models\Invoice::create([
+                'municipality_id' => $muni->id, 'billing_run_id' => $run->id, 'customer_id' => $customer->id,
+                'invoice_number' => '202607-99999', 'period_month' => now()->startOfMonth(), 'currency' => 'USD',
+                'subtotal' => 90, 'tax_total' => 13.95, 'total' => 103.95, 'status' => 'issued', 'issued_at' => now(),
+            ]);
+            $invoice->lines()->create([
+                'service_id' => $service->id, 'description' => 'Assessment Rates — Njelele Plots',
+                'quantity' => 1, 'unit_amount' => 90, 'amount' => 90, 'tax_amount' => 13.95,
+            ]);
+
+            $result = app(\App\Services\Sage\SageBillingRunPoster::class)->preview($run);
+
+            // The line resolved to a real Sage debtor and the mapped revenue account,
+            // amounts carried in both USD and home currency — and nothing was written.
+            $this->assertCount(1, $result['lines']);
+            $this->assertSame([], $result['unresolved']);
+            $line = $result['lines'][0];
+            $this->assertGreaterThan(0, $line['iAccountID']);
+            $this->assertNotNull($line['iGLContraID']);
+            $this->assertSame(90.0, $line['fAmountExclForeign']);
+            $this->assertSame(103.95, $line['fAmountInclForeign']);
+            $this->assertGreaterThan(1.0, $result['exchange_rate']);
+            $this->assertSame(1, $line['bIsDebit']);
+        });
+    }
 }
