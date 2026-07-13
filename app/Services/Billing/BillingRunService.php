@@ -67,7 +67,7 @@ final class BillingRunService
                 $invoice = $run->invoices()->create([
                     'municipality_id' => $municipality->id,
                     'customer_id' => $projected['customer_id'],
-                    'invoice_number' => $this->invoiceNumber($municipality->code ?: (string) $municipality->id, $period, $sequence),
+                    'invoice_number' => $this->invoiceNumber($period, $sequence),
                     'period_month' => $period,
                     'currency' => $projected['currency'],
                     'subtotal' => $projected['subtotal'],
@@ -287,9 +287,11 @@ final class BillingRunService
         return "{$areaId}|{$serviceId}|{$currency}";
     }
 
-    private function invoiceNumber(string $prefix, \Illuminate\Support\Carbon $period, int $sequence): string
+    private function invoiceNumber(\Illuminate\Support\Carbon $period, int $sequence): string
     {
-        return sprintf('%s-%s-%05d', strtoupper($prefix), $period->format('Ym'), $sequence);
+        // Figures only: billing period (YYYYMM) followed by a zero-padded sequence,
+        // e.g. "202607-00001". No municipality name/code prefix.
+        return sprintf('%s-%05d', $period->format('Ym'), $sequence);
     }
 
     /**
