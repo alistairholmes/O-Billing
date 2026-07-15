@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
+use App\Filament\Resources\BillingRuns\Actions\BillingRunPdfActions;
 use App\Filament\Resources\BillingRuns\BillingRunResource;
 use App\Models\BillingRun;
 use BackedEnum;
@@ -60,6 +61,9 @@ class PostBillingReport extends Page implements HasTable
                     ->label('View invoices')
                     ->icon(Heroicon::OutlinedDocumentText)
                     ->url(fn (BillingRun $r) => BillingRunResource::getUrl('view', ['record' => $r])),
+                BillingRunPdfActions::printReport('post-billing'),
+                BillingRunPdfActions::downloadReport('post-billing'),
+                BillingRunPdfActions::downloadInvoices(),
             ]);
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Filament\Pages;
 
+use App\Filament\Resources\BillingRuns\Actions\BillingRunPdfActions;
 use App\Models\BillingRun;
 use App\Services\Billing\BillingRunService;
 use App\Support\Currencies;
@@ -75,6 +76,8 @@ class PreBillingReport extends Page implements HasTable
                     ]))
                     ->modalSubmitAction(false)
                     ->modalCancelActionLabel('Close'),
+                BillingRunPdfActions::printReport('pre-billing'),
+                BillingRunPdfActions::downloadReport('pre-billing'),
                 Action::make('process')
                     ->label('Process')
                     ->icon(Heroicon::OutlinedPlayCircle)

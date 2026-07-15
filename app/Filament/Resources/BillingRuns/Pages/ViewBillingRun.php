@@ -2,12 +2,14 @@
 
 namespace App\Filament\Resources\BillingRuns\Pages;
 
+use App\Filament\Resources\BillingRuns\Actions\BillingRunPdfActions;
 use App\Filament\Resources\BillingRuns\Actions\PostToSageAction;
 use App\Filament\Resources\BillingRuns\BillingRunResource;
 use App\Models\BillingRun;
 use App\Services\Billing\BillingRunService;
 use App\Support\Currencies;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Notifications\Notification;
 use Filament\Resources\Pages\ViewRecord;
 use Filament\Support\Icons\Heroicon;
@@ -38,6 +40,17 @@ class ViewBillingRun extends ViewRecord
                         ->send();
                 }),
             PostToSageAction::make(),
+            ActionGroup::make([
+                BillingRunPdfActions::printReport('pre-billing'),
+                BillingRunPdfActions::downloadReport('pre-billing'),
+                BillingRunPdfActions::printReport('post-billing'),
+                BillingRunPdfActions::downloadReport('post-billing'),
+                BillingRunPdfActions::downloadInvoices(),
+            ])
+                ->label('Print / PDF')
+                ->icon(Heroicon::OutlinedPrinter)
+                ->button()
+                ->color('gray'),
         ];
     }
 }

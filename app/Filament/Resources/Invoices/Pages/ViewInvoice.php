@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\Invoices\Pages;
 
+use App\Filament\Resources\Invoices\Actions\InvoicePdfActions;
 use App\Filament\Resources\Invoices\InvoiceResource;
 use App\Models\Invoice;
 use App\Support\Currencies;
@@ -13,6 +14,14 @@ use Filament\Schemas\Schema;
 class ViewInvoice extends ViewRecord
 {
     protected static string $resource = InvoiceResource::class;
+
+    protected function getHeaderActions(): array
+    {
+        return [
+            InvoicePdfActions::print(),
+            InvoicePdfActions::download(),
+        ];
+    }
 
     public function infolist(Schema $schema): Schema
     {

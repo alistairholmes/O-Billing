@@ -2,6 +2,7 @@
 
 namespace App\Filament\Resources\BillingRuns\RelationManagers;
 
+use App\Filament\Resources\Invoices\Actions\InvoicePdfActions;
 use App\Models\Invoice;
 use App\Support\Currencies;
 use Filament\Resources\RelationManagers\RelationManager;
@@ -32,6 +33,10 @@ class InvoicesRelationManager extends RelationManager
                     ->weight('bold'),
                 TextColumn::make('currency')->badge(),
                 TextColumn::make('status')->badge(),
+            ])
+            ->recordActions([
+                InvoicePdfActions::print(),
+                InvoicePdfActions::download(),
             ]);
     }
 }
