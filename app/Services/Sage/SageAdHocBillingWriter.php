@@ -19,10 +19,23 @@ use Illuminate\Support\Facades\DB;
  * test company (SAGE_WRITE_DATABASE) until it is deliberately pointed at the live
  * database. Property/service links are resolved against that same target so the
  * foreign keys are always valid there.
+ *
+ * Only companies running the CCG property module have this staging pipeline —
+ * check {@see targetsAdHocBilling()} first. Debtors-ledger companies (e.g.
+ * Gokwe South) post single invoices via SageBillingRunPoster::postInvoice()
+ * instead.
  */
 final class SageAdHocBillingWriter
 {
     private const CONN = 'sage_write';
+
+    /** Whether the write target has the ad-hoc billing staging tables. */
+    public function targetsAdHocBilling(): bool
+    {
+        static $has = null;
+
+        return $has ??= DB::connection(self::CONN)->getSchemaBuilder()->hasTable('_ccg_EB_AdHocBillingBatches');
+    }
 
     /**
      * @return array{

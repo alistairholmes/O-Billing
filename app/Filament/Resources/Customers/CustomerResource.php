@@ -15,16 +15,17 @@ use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
 use Filament\Facades\Filament;
-use Filament\Notifications\Notification;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Forms\Components\Toggle;
+use Filament\Notifications\Notification;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
 use Filament\Schemas\Schema;
 use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
+use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use UnitEnum;
 
@@ -145,10 +146,10 @@ class CustomerResource extends Resource
                 IconColumn::make('active')->boolean(),
             ])
             ->filters([
-                \Filament\Tables\Filters\SelectFilter::make('area_id')
+                SelectFilter::make('area_id')
                     ->label('Suburb')
                     ->options(fn () => Area::billingLevel()->pluck('name', 'id')),
-                \Filament\Tables\Filters\SelectFilter::make('type')
+                SelectFilter::make('type')
                     ->options([
                         'residential' => 'Residential',
                         'business' => 'Business',
@@ -168,9 +169,10 @@ class CustomerResource extends Resource
     }
 
     /**
-     * Create this property (and its owner debtor, if new) in the Sage database so
-     * it shows up in Sage. Writes to the configured write database — the test
-     * company by default.
+     * Create this property in the Sage database so it shows up in Sage — as a
+     * property record when the company runs the property module, or as one
+     * debtor account per service when it keeps properties in the debtors
+     * ledger. Writes to the configured write database.
      */
     private static function pushToSageAction(): Action
     {
@@ -180,15 +182,36 @@ class CustomerResource extends Resource
             ->color('gray')
             ->requiresConfirmation()
             ->modalHeading('Send property to Sage')
-            ->modalDescription(fn (): string => 'Creates this property (and its owner, if not already in Sage) in "'
-                .config('database.connections.sage_write.database').'", so it appears in the Sage property list.')
+            ->modalDescription(function (): string {
+                $database = config('database.connections.sage_write.database');
+
+                return app(SagePropertyWriter::class)->targetsPropertyModule()
+                    ? "Creates this property (and its owner, if not already in Sage) in \"{$database}\", so it appears in the Sage property list."
+                    : "This Sage company keeps properties as debtor accounts. Creates one Sage debtor account per subscribed service in \"{$database}\" (e.g. STAND-DEVR-…), so the property appears in the Sage debtors ledger and can be billed.";
+            })
             ->modalSubmitActionLabel('Send to Sage')
             ->action(function (Customer $record): void {
-                $result = app(SagePropertyWriter::class)->pushProperty($record->load(['area', 'services']));
+                $result = app(SagePropertyWriter::class)
+                    ->pushProperty($record->load(['area', 'services.serviceType']));
 
                 if (! ($result['ok'] ?? false)) {
                     Notification::make()->danger()->title('Could not send to Sage')
                         ->body($result['error'] ?? 'Unknown error')->persistent()->send();
+
+                    return;
+                }
+
+                if (($result['mode'] ?? null) === 'ledger') {
+                    $parts = ['Created '.implode(', ', $result['created']).' in "'.$result['database'].'".'];
+                    if ($result['existing'] !== []) {
+                        $parts[] = 'Already there: '.implode(', ', $result['existing']).'.';
+                    }
+                    if ($result['unmapped'] !== []) {
+                        $parts[] = 'No Sage account type for: '.implode(', ', $result['unmapped']).'.';
+                    }
+
+                    Notification::make()->success()->title("Property {$result['stand']} created in Sage")
+                        ->body(implode(' ', $parts))->persistent()->send();
 
                     return;
                 }

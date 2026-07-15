@@ -6,6 +6,8 @@ namespace App\Services\Sage;
 
 use App\Models\BillingRun;
 use App\Models\Invoice;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -43,7 +45,8 @@ use Illuminate\Support\Facades\DB;
  *
  * `preview()` builds everything without writing; `post()` writes it all in one
  * transaction. A run whose invoice numbers already appear on Sage documents is
- * refused (double-post guard) unless forced.
+ * refused (double-post guard) unless forced. `previewInvoice()` / `postInvoice()`
+ * do the same for a single O-Billing invoice.
  */
 final class SageBillingRunPoster
 {
@@ -52,17 +55,40 @@ final class SageBillingRunPoster
     /** @return array<string,mixed> */
     public function preview(BillingRun $run): array
     {
-        return $this->build($run);
+        return $this->build($this->runInvoices($run), $run->period_month);
     }
 
     /** @return array<string,mixed> */
     public function post(BillingRun $run, bool $force = false): array
     {
-        $build = $this->build($run);
+        return $this->commit($this->preview($run), "run {$run->run_number}", $force);
+    }
 
+    /** @return array<string,mixed> */
+    public function previewInvoice(Invoice $invoice): array
+    {
+        $invoice->loadMissing(['customer', 'lines.service.serviceType']);
+
+        return $this->build(collect([$invoice]), $invoice->period_month);
+    }
+
+    /** @return array<string,mixed> */
+    public function postInvoice(Invoice $invoice, bool $force = false): array
+    {
+        return $this->commit($this->previewInvoice($invoice), "invoice {$invoice->invoice_number}", $force);
+    }
+
+    /**
+     * Guard, then write a built document set to Sage in one transaction.
+     *
+     * @param  array<string,mixed>  $build
+     * @return array<string,mixed>
+     */
+    private function commit(array $build, string $subject, bool $force): array
+    {
         if ($build['already_posted'] > 0 && ! $force) {
-            $build['error'] = "{$build['already_posted']} invoice(s) of run {$run->run_number} are already posted in Sage "
-                ."(e.g. {$build['already_posted_example']}). Posting again would double-bill; pass --force only if you are certain.";
+            $build['error'] = "{$build['already_posted']} invoice(s) of {$subject} are already posted in Sage "
+                ."(e.g. {$build['already_posted_example']}). Posting again would double-bill; force only if you are certain.";
 
             return $build;
         }
@@ -185,8 +211,21 @@ final class SageBillingRunPoster
         return $build;
     }
 
-    /** @return array<string,mixed> */
-    private function build(BillingRun $run): array
+    /** @return Collection<int, Invoice> */
+    private function runInvoices(BillingRun $run): Collection
+    {
+        return Invoice::withoutGlobalScopes()
+            ->where('billing_run_id', $run->id)
+            ->with(['customer', 'lines.service.serviceType'])
+            ->get()
+            ->toBase();
+    }
+
+    /**
+     * @param  Collection<int, Invoice>  $invoices
+     * @return array<string,mixed>
+     */
+    private function build(Collection $invoices, Carbon $periodMonth): array
     {
         $database = (string) config('database.connections.'.self::CONN.'.database');
         $cfg = config('sage.posting');
@@ -205,11 +244,11 @@ final class SageBillingRunPoster
             throw new \RuntimeException("Invoice transaction code #{$stdf->InvTrCodeID} not found in {$database}.");
         }
 
-        $txDate = $run->period_month->format('Y-m-d');
+        $txDate = $periodMonth->format('Y-m-d');
         $period = $conn->table('_etblPeriod')
             ->whereBetween('dPeriodDate', [
-                $run->period_month->copy()->startOfMonth()->format('Y-m-d'),
-                $run->period_month->copy()->endOfMonth()->format('Y-m-d 23:59:59'),
+                $periodMonth->copy()->startOfMonth()->format('Y-m-d'),
+                $periodMonth->copy()->endOfMonth()->format('Y-m-d 23:59:59'),
             ])->first();
         if ($period === null) {
             throw new \RuntimeException("No Sage accounting period covers {$txDate} — create the period in Evolution first.");
@@ -253,11 +292,6 @@ final class SageBillingRunPoster
         }
 
         // --- One Sage invoice document per O-Billing invoice line.
-        $invoices = Invoice::withoutGlobalScopes()
-            ->where('billing_run_id', $run->id)
-            ->with(['customer', 'lines.service.serviceType'])
-            ->get();
-
         $docs = [];
         $unresolved = [];
         $byToken = [];
@@ -315,7 +349,7 @@ final class SageBillingRunPoster
                 $dclink = (int) $client->DCLink;
                 $repId = (int) ($client->RepID ?? 0);
 
-                $desc = mb_substr($line->service->serviceType->name.' '.$run->period_month->format('M Y'), 0, 50);
+                $desc = mb_substr($line->service->serviceType->name.' '.$periodMonth->format('M Y'), 0, 50);
                 $obNumbers[] = $invoice->invoice_number;
 
                 $docs[] = [

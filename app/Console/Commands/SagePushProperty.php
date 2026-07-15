@@ -17,7 +17,7 @@ class SagePushProperty extends Command
     public function handle(SagePropertyWriter $writer): int
     {
         $arg = (string) $this->argument('customer');
-        $customer = Customer::with(['area', 'services'])
+        $customer = Customer::with(['area', 'services.serviceType'])
             ->where('id', $arg)->orWhere('account_number', $arg)->first();
 
         if ($customer === null) {
@@ -37,12 +37,27 @@ class SagePushProperty extends Command
         }
 
         $this->info("Created in: {$result['database']}");
-        $this->line("  • property #{$result['property_id']} (erf {$result['erf']})");
-        $this->line('  • owner debtor #'.$result['owner_dclink'].' ('.($result['owner_created'] ? 'newly created' : 'linked to existing').')');
-        $this->line('  • '.$result['services'].' billable service(s) linked');
-        if (! $result['area_linked']) {
-            $this->warn('  • no Sage area was linked (the O-Billing suburb is not from Sage) — set it in Sage if needed.');
+
+        if (($result['mode'] ?? null) === 'ledger') {
+            // No property module in this company — the property is its debtor accounts.
+            foreach ($result['created'] as $account) {
+                $this->line("  • debtor account {$account}");
+            }
+            foreach ($result['existing'] as $account) {
+                $this->line("  • {$account} already existed (skipped)");
+            }
+            foreach ($result['unmapped'] as $service) {
+                $this->warn("  • no Sage account type for service '{$service}' — no account created for it.");
+            }
+        } else {
+            $this->line("  • property #{$result['property_id']} (erf {$result['erf']})");
+            $this->line('  • owner debtor #'.$result['owner_dclink'].' ('.($result['owner_created'] ? 'newly created' : 'linked to existing').')');
+            $this->line('  • '.$result['services'].' billable service(s) linked');
+            if (! $result['area_linked']) {
+                $this->warn('  • no Sage area was linked (the O-Billing suburb is not from Sage) — set it in Sage if needed.');
+            }
         }
+
         $this->newLine();
         $this->info('Done. The property now appears in Sage.');
 

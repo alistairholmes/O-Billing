@@ -4,9 +4,30 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Filament\Resources\BillingRuns\Pages\ViewBillingRun;
+use App\Filament\Resources\Sage\Pages\ListClients;
+use App\Filament\Resources\Sage\Pages\ListServiceGroups;
+use App\Filament\Widgets\BillingIncomeByMonth;
+use App\Filament\Widgets\PropertyMix;
+use App\Filament\Widgets\RevenueByService;
+use App\Filament\Widgets\RevenueBySuburb;
+use App\Filament\Widgets\RevenueOverview;
+use App\Models\Area;
+use App\Models\AreaType;
+use App\Models\BillingRun;
+use App\Models\Customer;
+use App\Models\Invoice;
 use App\Models\Municipality;
+use App\Models\Sage\Client;
+use App\Models\Service;
+use App\Models\ServiceType;
 use App\Models\User;
+use App\Services\Sage\SageBillingRunPoster;
+use App\Services\Sage\SagePropertyWriter;
+use App\Support\Tenancy\CurrentMunicipality;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Livewire\Livewire;
 use Tests\TestCase;
 
 /**
@@ -63,7 +84,7 @@ class SageIntegrationTest extends TestCase
         // SQL Server pagination needs an ORDER BY; the resources set defaultSort,
         // so a deep page must load without error and return a full page of rows.
         // Client is the large populated Sage table (the debtor ledger).
-        $page2 = \App\Models\Sage\Client::query()->orderBy('Account')->paginate(25, ['*'], 'page', 2);
+        $page2 = Client::query()->orderBy('Account')->paginate(25, ['*'], 'page', 2);
 
         $this->assertSame(2, $page2->currentPage());
         $this->assertCount(25, $page2->items());
@@ -73,24 +94,24 @@ class SageIntegrationTest extends TestCase
     public function test_billing_run_invoices_display_in_the_panel(): void
     {
         [$muni, $user] = $this->tenantUser();
-        app(\App\Support\Tenancy\CurrentMunicipality::class)->set($muni->id);
+        app(CurrentMunicipality::class)->set($muni->id);
 
-        $areaType = \App\Models\AreaType::create([
+        $areaType = AreaType::create([
             'municipality_id' => $muni->id, 'name' => 'Area', 'level' => 1, 'is_billing_level' => true,
         ]);
-        $area = \App\Models\Area::create([
+        $area = Area::create([
             'municipality_id' => $muni->id, 'area_type_id' => $areaType->id, 'name' => 'CBD',
         ]);
-        $customer = \App\Models\Customer::create([
+        $customer = Customer::create([
             'municipality_id' => $muni->id, 'area_id' => $area->id, 'account_number' => 'ACC-1',
             'name' => 'Test Ratepayer', 'type' => 'residential', 'currency' => 'USD',
         ]);
-        $run = \App\Models\BillingRun::create([
+        $run = BillingRun::create([
             'municipality_id' => $muni->id, 'run_number' => 'BR-TEST-1', 'period_month' => now()->startOfMonth(),
             'frequency' => 'monthly', 'status' => 'completed', 'invoice_count' => 1,
             'currency_totals' => ['USD' => 150.0], 'run_at' => now(),
         ]);
-        $invoice = \App\Models\Invoice::create([
+        $invoice = Invoice::create([
             'municipality_id' => $muni->id, 'billing_run_id' => $run->id, 'customer_id' => $customer->id,
             'invoice_number' => 'INV-TEST-1', 'period_month' => now()->startOfMonth(), 'currency' => 'USD',
             'subtotal' => 130, 'tax_total' => 20, 'total' => 150, 'status' => 'issued', 'issued_at' => now(),
@@ -111,31 +132,31 @@ class SageIntegrationTest extends TestCase
     public function test_dashboard_chart_widgets_generate_data(): void
     {
         [$muni, $user] = $this->tenantUser();
-        app(\App\Support\Tenancy\CurrentMunicipality::class)->set($muni->id);
+        app(CurrentMunicipality::class)->set($muni->id);
         $this->actingAs($user);
         filament()->setCurrentPanel(filament()->getPanel('admin'));
         filament()->setTenant($muni);
 
         // Minimal billed data so the charts have something to aggregate.
-        $areaType = \App\Models\AreaType::create(['municipality_id' => $muni->id, 'name' => 'Area', 'level' => 1, 'is_billing_level' => true]);
-        $area = \App\Models\Area::create(['municipality_id' => $muni->id, 'area_type_id' => $areaType->id, 'name' => 'CBD']);
-        $type = \App\Models\ServiceType::create(['municipality_id' => $muni->id, 'name' => 'Refuse', 'billing_basis' => 'flat']);
-        $service = \App\Models\Service::create(['municipality_id' => $muni->id, 'service_type_id' => $type->id, 'name' => 'Refuse']);
-        $customer = \App\Models\Customer::create(['municipality_id' => $muni->id, 'area_id' => $area->id, 'account_number' => 'A1', 'name' => 'Ratepayer', 'type' => 'residential', 'currency' => 'USD']);
-        $run = \App\Models\BillingRun::create(['municipality_id' => $muni->id, 'run_number' => 'R1', 'period_month' => now()->startOfMonth(), 'frequency' => 'monthly', 'status' => 'completed']);
-        $invoice = \App\Models\Invoice::create(['municipality_id' => $muni->id, 'billing_run_id' => $run->id, 'customer_id' => $customer->id, 'invoice_number' => 'I1', 'period_month' => now()->startOfMonth(), 'currency' => 'USD', 'subtotal' => 100, 'tax_total' => 15, 'total' => 115, 'status' => 'issued']);
+        $areaType = AreaType::create(['municipality_id' => $muni->id, 'name' => 'Area', 'level' => 1, 'is_billing_level' => true]);
+        $area = Area::create(['municipality_id' => $muni->id, 'area_type_id' => $areaType->id, 'name' => 'CBD']);
+        $type = ServiceType::create(['municipality_id' => $muni->id, 'name' => 'Refuse', 'billing_basis' => 'flat']);
+        $service = Service::create(['municipality_id' => $muni->id, 'service_type_id' => $type->id, 'name' => 'Refuse']);
+        $customer = Customer::create(['municipality_id' => $muni->id, 'area_id' => $area->id, 'account_number' => 'A1', 'name' => 'Ratepayer', 'type' => 'residential', 'currency' => 'USD']);
+        $run = BillingRun::create(['municipality_id' => $muni->id, 'run_number' => 'R1', 'period_month' => now()->startOfMonth(), 'frequency' => 'monthly', 'status' => 'completed']);
+        $invoice = Invoice::create(['municipality_id' => $muni->id, 'billing_run_id' => $run->id, 'customer_id' => $customer->id, 'invoice_number' => 'I1', 'period_month' => now()->startOfMonth(), 'currency' => 'USD', 'subtotal' => 100, 'tax_total' => 15, 'total' => 115, 'status' => 'issued']);
         $invoice->lines()->create(['service_id' => $service->id, 'description' => 'Refuse', 'quantity' => 1, 'unit_amount' => 100, 'amount' => 100, 'tax_amount' => 15]);
 
         foreach ([
-            \App\Filament\Widgets\BillingIncomeByMonth::class,
-            \App\Filament\Widgets\RevenueByService::class,
-            \App\Filament\Widgets\RevenueBySuburb::class,
-            \App\Filament\Widgets\PropertyMix::class,
+            BillingIncomeByMonth::class,
+            RevenueByService::class,
+            RevenueBySuburb::class,
+            PropertyMix::class,
         ] as $widget) {
-            \Livewire\Livewire::test($widget)->call('updateChartData')->assertOk();
+            Livewire::test($widget)->call('updateChartData')->assertOk();
         }
 
-        \Livewire\Livewire::test(\App\Filament\Widgets\RevenueOverview::class)->assertOk();
+        Livewire::test(RevenueOverview::class)->assertOk();
     }
 
     public function test_view_modals_render_their_infolists(): void
@@ -149,13 +170,13 @@ class SageIntegrationTest extends TestCase
         // entry referenced a broken relation it would throw here. assertOk()
         // confirms the component (with the modal mounted) rendered cleanly. Client
         // and Service are the populated Sage tables in this deployment.
-        $client = \App\Models\Sage\Client::query()->first();
-        \Livewire\Livewire::test(\App\Filament\Resources\Sage\Pages\ListClients::class)
+        $client = Client::query()->first();
+        Livewire::test(ListClients::class)
             ->mountTableAction('view', $client->getKey())
             ->assertOk();
 
         $service = \App\Models\Sage\Service::query()->first();
-        \Livewire\Livewire::test(\App\Filament\Resources\Sage\Pages\ListServiceGroups::class)
+        Livewire::test(ListServiceGroups::class)
             ->mountTableAction('view', $service->getKey())
             ->assertOk();
     }
@@ -167,14 +188,14 @@ class SageIntegrationTest extends TestCase
         filament()->setCurrentPanel(filament()->getPanel('admin'));
         filament()->setTenant($muni);
 
-        $run = \App\Models\BillingRun::create([
+        $run = BillingRun::create([
             'municipality_id' => $muni->id, 'run_number' => 'BR-UI-TEST', 'period_month' => now()->startOfMonth(),
             'frequency' => 'monthly', 'status' => 'completed', 'invoice_count' => 0,
         ]);
 
         // Mounting the action builds the confirmation modal, which runs the live
         // dry-run preview against Sage; a resolution failure would throw here.
-        \Livewire\Livewire::test(\App\Filament\Resources\BillingRuns\Pages\ViewBillingRun::class, ['record' => $run->getRouteKey()])
+        Livewire::test(ViewBillingRun::class, ['record' => $run->getRouteKey()])
             ->mountAction('postToSage')
             ->assertOk();
     }
@@ -183,29 +204,29 @@ class SageIntegrationTest extends TestCase
     {
         [$muni] = $this->tenantUser();
 
-        app(\App\Support\Tenancy\CurrentMunicipality::class)->runFor($muni->id, function () use ($muni): void {
-            $areaType = \App\Models\AreaType::create([
+        app(CurrentMunicipality::class)->runFor($muni->id, function () use ($muni): void {
+            $areaType = AreaType::create([
                 'municipality_id' => $muni->id, 'name' => 'Ward', 'level' => 1, 'is_billing_level' => true,
             ]);
-            $ward = \App\Models\Area::create([
+            $ward = Area::create([
                 'municipality_id' => $muni->id, 'area_type_id' => $areaType->id, 'name' => 'Njelele Plots',
             ]);
-            $type = \App\Models\ServiceType::create([
+            $type = ServiceType::create([
                 'municipality_id' => $muni->id, 'name' => 'Assessment Rates', 'code' => 'LEDGER-ASSR',
                 'billing_basis' => 'flat', 'default_frequency' => 'annually', 'active' => true,
             ]);
             $service = $type->ensureDefaultService();
 
             // PLT006 exists in the live Sage ledger as PLT006-ASSR-… (read-only lookup).
-            $customer = \App\Models\Customer::create([
+            $customer = Customer::create([
                 'municipality_id' => $muni->id, 'area_id' => $ward->id, 'account_number' => 'PLT006',
                 'name' => 'Josiah Tanyara', 'type' => 'residential', 'currency' => 'USD', 'active' => true,
             ]);
-            $run = \App\Models\BillingRun::create([
+            $run = BillingRun::create([
                 'municipality_id' => $muni->id, 'run_number' => 'BR-POST-TEST', 'period_month' => now()->startOfMonth(),
                 'frequency' => 'annually', 'status' => 'completed',
             ]);
-            $invoice = \App\Models\Invoice::create([
+            $invoice = Invoice::create([
                 'municipality_id' => $muni->id, 'billing_run_id' => $run->id, 'customer_id' => $customer->id,
                 'invoice_number' => '202607-99999', 'period_month' => now()->startOfMonth(), 'currency' => 'USD',
                 'subtotal' => 90, 'tax_total' => 13.95, 'total' => 103.95, 'status' => 'issued', 'issued_at' => now(),
@@ -215,7 +236,7 @@ class SageIntegrationTest extends TestCase
                 'quantity' => 1, 'unit_amount' => 90, 'amount' => 90, 'tax_amount' => 13.95,
             ]);
 
-            $result = app(\App\Services\Sage\SageBillingRunPoster::class)->preview($run);
+            $result = app(SageBillingRunPoster::class)->preview($run);
 
             // The line resolved to a real Sage debtor, class control account and
             // service item, a balanced GL double entry was built in home currency,
@@ -234,6 +255,139 @@ class SageIntegrationTest extends TestCase
             $this->assertSame($doc['post_ar']['Debit'], $debits);
             $this->assertSame(0, $result['already_posted']);
             $this->assertStringStartsWith('INV', $result['next_invoice_number']);
+        });
+    }
+
+    public function test_property_writer_creates_one_ledger_debtor_account_per_service(): void
+    {
+        [$muni] = $this->tenantUser();
+
+        app(CurrentMunicipality::class)->runFor($muni->id, function () use ($muni): void {
+            $writer = app(SagePropertyWriter::class);
+            if ($writer->targetsPropertyModule()) {
+                $this->markTestSkipped('The Sage write target runs the property module, not a debtors ledger.');
+            }
+
+            $wardId = (int) DB::connection('sage_write')->table('Areas')->min('idAreas');
+
+            $areaType = AreaType::create([
+                'municipality_id' => $muni->id, 'name' => 'Ward', 'level' => 1, 'is_billing_level' => true,
+            ]);
+            $ward = Area::create([
+                'municipality_id' => $muni->id, 'area_type_id' => $areaType->id,
+                'name' => 'Test Ward', 'sage_id' => "ward:{$wardId}",
+            ]);
+            $type = ServiceType::create([
+                'municipality_id' => $muni->id, 'name' => 'Development Levy (Rural)', 'code' => 'LEDGER-DEVR',
+                'billing_basis' => 'flat', 'active' => true,
+            ]);
+            $service = $type->ensureDefaultService();
+
+            $stand = 'ZZT'.random_int(10000, 99999);
+            $customer = Customer::create([
+                'municipality_id' => $muni->id, 'area_id' => $ward->id, 'account_number' => $stand,
+                'name' => 'Test Ratepayer', 'type' => 'residential', 'currency' => 'USD', 'active' => true,
+            ]);
+            $customer->services()->attach($service->id);
+            $customer->load(['area', 'services.serviceType']);
+
+            // All Sage writes happen inside this transaction and are rolled back.
+            DB::connection('sage_write')->beginTransaction();
+            try {
+                $result = $writer->pushProperty($customer);
+
+                $this->assertTrue($result['ok']);
+                $this->assertSame('ledger', $result['mode']);
+                $this->assertCount(1, $result['created']);
+                $this->assertStringStartsWith("{$stand}-DEVR", $result['created'][0]);
+
+                // The debtor exists with the token's class, the ward and USD, so
+                // billing posting can resolve it like any imported account.
+                $client = DB::connection('sage_write')->table('Client')
+                    ->where('Account', $result['created'][0])->first();
+                $this->assertNotNull($client);
+                $this->assertNotNull($client->iClassID);
+                $this->assertSame($wardId, (int) $client->iAreasID);
+                $this->assertSame('Test Ratepayer', $client->Name);
+
+                // A second push must refuse to duplicate the accounts.
+                $again = $writer->pushProperty($customer);
+                $this->assertFalse($again['ok']);
+                $this->assertStringContainsString('Already in Sage', $again['error']);
+            } finally {
+                DB::connection('sage_write')->rollBack();
+            }
+
+            $this->assertSame(0, DB::connection('sage_write')
+                ->table('Client')->where('Account', 'like', $stand.'%')->count());
+        });
+    }
+
+    public function test_single_invoice_posts_to_sage_as_a_posted_document(): void
+    {
+        [$muni] = $this->tenantUser();
+
+        app(CurrentMunicipality::class)->runFor($muni->id, function () use ($muni): void {
+            $areaType = AreaType::create([
+                'municipality_id' => $muni->id, 'name' => 'Ward', 'level' => 1, 'is_billing_level' => true,
+            ]);
+            $ward = Area::create([
+                'municipality_id' => $muni->id, 'area_type_id' => $areaType->id, 'name' => 'Njelele Plots',
+            ]);
+            $type = ServiceType::create([
+                'municipality_id' => $muni->id, 'name' => 'Assessment Rates', 'code' => 'LEDGER-ASSR',
+                'billing_basis' => 'flat', 'default_frequency' => 'annually', 'active' => true,
+            ]);
+            $service = $type->ensureDefaultService();
+
+            // PLT006 exists in the live Sage ledger as PLT006-ASSR-… (read-only lookup).
+            $customer = Customer::create([
+                'municipality_id' => $muni->id, 'area_id' => $ward->id, 'account_number' => 'PLT006',
+                'name' => 'Josiah Tanyara', 'type' => 'residential', 'currency' => 'USD', 'active' => true,
+            ]);
+            $run = BillingRun::create([
+                'municipality_id' => $muni->id, 'run_number' => 'BR-POST-ONE', 'period_month' => now()->startOfMonth(),
+                'frequency' => 'annually', 'status' => 'completed',
+            ]);
+            $obNumber = 'OBTEST-'.random_int(100000, 999999);
+            $invoice = Invoice::create([
+                'municipality_id' => $muni->id, 'billing_run_id' => $run->id, 'customer_id' => $customer->id,
+                'invoice_number' => $obNumber, 'period_month' => now()->startOfMonth(), 'currency' => 'USD',
+                'subtotal' => 90, 'tax_total' => 13.95, 'total' => 103.95, 'status' => 'issued', 'issued_at' => now(),
+            ]);
+            $invoice->lines()->create([
+                'service_id' => $service->id, 'description' => 'Assessment Rates — Njelele Plots',
+                'quantity' => 1, 'unit_amount' => 90, 'amount' => 90, 'tax_amount' => 13.95,
+            ]);
+
+            // All Sage writes happen inside this transaction and are rolled back.
+            DB::connection('sage_write')->beginTransaction();
+            try {
+                $poster = app(SageBillingRunPoster::class);
+                $result = $poster->postInvoice($invoice);
+
+                $this->assertArrayNotHasKey('error', $result);
+                $this->assertSame(1, $result['posted']);
+
+                // The posted document exists and carries the O-Billing number.
+                $doc = DB::connection('sage_write')->table('InvNum')->where('ExtOrderNum', $obNumber)->first();
+                $this->assertNotNull($doc);
+                $this->assertSame($result['invoice_from'], $doc->InvNumber);
+                $this->assertSame(4, (int) $doc->DocState);
+                $this->assertEqualsWithDelta(103.95, (float) $doc->fInvTotInclForeign, 0.001);
+
+                // Its GL double entry balances to the cent.
+                $gl = DB::connection('sage_write')->table('PostGL')->where('Reference', $doc->InvNumber)->get();
+                $this->assertEqualsWithDelta((float) $gl->sum('Debit'), (float) $gl->sum('Credit'), 0.005);
+
+                // Posting the same invoice again is refused (double-bill guard).
+                $again = $poster->postInvoice($invoice);
+                $this->assertStringContainsString('already posted', $again['error'] ?? '');
+            } finally {
+                DB::connection('sage_write')->rollBack();
+            }
+
+            $this->assertSame(0, DB::connection('sage_write')->table('InvNum')->where('ExtOrderNum', $obNumber)->count());
         });
     }
 }

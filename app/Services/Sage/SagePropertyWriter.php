@@ -8,39 +8,67 @@ use App\Models\Customer;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Creates a new property (and, if needed, its owner debtor) in Sage so a
- * property added in O-Billing shows up in the Sage property list.
+ * Creates a new property in Sage so a property added in O-Billing shows up
+ * there. Sage companies keep properties in one of two shapes, detected from
+ * the write target's schema:
  *
- * A Sage property (`_ccg_EB_Properties`) needs only an ErfNumber; its owner is a
- * Sage debtor (`Client`). Debtor control in Sage Evolution is a company-level GL
- * account, not per-client, and neither table has triggers or required columns, so
- * a new debtor is inert (no ledger impact) until it is actually billed. New
- * debtors copy an existing debtor's class / currency / terms so they behave the
- * same as the rest.
+ *  • Property module (`_ccg_EB_Properties`): a property row (keyed on its erf
+ *    number) plus, if needed, its owner debtor (`Client`) and a
+ *    `_ccg_EB_PropertyServices` link per subscribed service.
  *
- * All writes go to the `sage_write` connection (the NON-PRODUCTION test company by
- * default), and the property/owner links are resolved against that same target.
+ *  • Debtors ledger (no property tables — e.g. Gokwe South): a property IS its
+ *    debtor accounts, one per service, coded `{STAND}-{TOKEN}-{portion}`
+ *    (see SageLedgerImportService). One `Client` row is created per subscribed
+ *    ledger service, copying the class / terms / portion convention from that
+ *    token's existing accounts so statements and billing posting resolve the
+ *    new account exactly like the rest.
+ *
+ * Debtor control in Sage Evolution is a company-level GL account, not
+ * per-client, and `Client` has no triggers or required columns, so a new
+ * debtor is inert (no ledger impact) until it is actually billed.
+ *
+ * All writes go to the `sage_write` connection (the NON-PRODUCTION test company
+ * by default), and all lookups resolve against that same target.
  */
 final class SagePropertyWriter
 {
     private const CONN = 'sage_write';
 
+    /** Whether the write target has the CCG property module tables. */
+    public function targetsPropertyModule(): bool
+    {
+        static $has = null;
+
+        return $has ??= DB::connection(self::CONN)->getSchemaBuilder()->hasTable('_ccg_EB_Properties');
+    }
+
     /**
-     * @return array{
-     *   ok: bool, database: string, error?: string,
-     *   property_id?: int, owner_dclink?: int, owner_created?: bool,
-     *   area_linked?: bool, services?: int, erf?: string
-     * }
+     * @return array<string, mixed> Always contains ok/database/mode; on success,
+     *                              property-module pushes add property_id / owner_dclink / owner_created /
+     *                              area_linked / services / erf, ledger pushes add stand / created / existing / unmapped.
      */
     public function pushProperty(Customer $customer): array
     {
         $database = (string) config('database.connections.'.self::CONN.'.database');
-        $erf = trim((string) $customer->account_number);
+        $account = trim((string) $customer->account_number);
 
-        if ($erf === '') {
-            return ['ok' => false, 'database' => $database, 'error' => 'The property needs an account/erf number before it can be sent to Sage.'];
+        if ($account === '') {
+            return ['ok' => false, 'database' => $database,
+                'error' => 'The property needs an account/stand number before it can be sent to Sage.'];
         }
 
+        return $this->targetsPropertyModule()
+            ? $this->pushPropertyModule($customer, $database, $account)
+            : $this->pushLedgerAccounts($customer, $database, $account);
+    }
+
+    // ------------------------------------------------------------------
+    // Property module (_ccg_EB_*) target
+    // ------------------------------------------------------------------
+
+    /** @return array<string, mixed> */
+    private function pushPropertyModule(Customer $customer, string $database, string $erf): array
+    {
         // Don't create a duplicate erf.
         if (DB::connection(self::CONN)->table('_ccg_EB_Properties')->where('ErfNumber', $erf)->exists()) {
             return ['ok' => false, 'database' => $database,
@@ -79,6 +107,7 @@ final class SagePropertyWriter
 
         return [
             'ok' => true,
+            'mode' => 'property',
             'database' => $database,
             'property_id' => (int) $propertyId,
             'owner_dclink' => (int) $ownerDclink,
@@ -102,26 +131,7 @@ final class SagePropertyWriter
             ->whereNotNull('iClassID')
             ->first(['iClassID', 'iSettlementTermsID', 'iAgeingTermID', 'iAreasID', 'AccountTerms', 'iARPriceListNameID']);
 
-        $currencyId = DB::connection(self::CONN)->table('Currency')
-            ->where('CurrencyCode', $customer->currency)->value('CurrencyLink') ?? 1;
-
-        $dclink = DB::connection(self::CONN)->table('Client')->insertGetId([
-            'Account' => $account,
-            'Name' => $customer->name,
-            'Physical1' => $customer->address,
-            'Telephone' => $customer->phone,
-            'EMail' => $customer->email,
-            'iCurrencyID' => (int) $currencyId,
-            'iClassID' => $template->iClassID ?? null,
-            'iSettlementTermsID' => $template->iSettlementTermsID ?? 0,
-            'iAgeingTermID' => $template->iAgeingTermID ?? 1,
-            'iAreasID' => $template->iAreasID ?? null,
-            'AccountTerms' => $template->AccountTerms ?? 0,
-            'iARPriceListNameID' => $template->iARPriceListNameID ?? null,
-            'UseEmail' => (bool) $customer->email,
-        ], 'DCLink');
-
-        return [(int) $dclink, true];
+        return [$this->createDebtor($customer, $account, $template, $template->iAreasID ?? null), true];
     }
 
     /**
@@ -173,5 +183,169 @@ final class SagePropertyWriter
         return ($sageId !== null && str_starts_with($sageId, 'area:'))
             ? (int) substr($sageId, 5)
             : null;
+    }
+
+    // ------------------------------------------------------------------
+    // Debtors-ledger target (no property module)
+    // ------------------------------------------------------------------
+
+    /** @return array<string, mixed> */
+    private function pushLedgerAccounts(Customer $customer, string $database, string $stand): array
+    {
+        // Each subscribed ledger service becomes one debtor account. The token is
+        // recovered from the service type's import code ("LEDGER-{TOKEN}").
+        $tokens = [];
+        $unmapped = [];
+        foreach ($customer->services as $service) {
+            $code = (string) ($service->serviceType?->code ?? '');
+            if (str_starts_with($code, 'LEDGER-')) {
+                $tokens[substr($code, 7)] = true;
+            } else {
+                $unmapped[] = $service->displayName();
+            }
+        }
+
+        if ($tokens === []) {
+            $hint = $unmapped === []
+                ? 'Subscribe it to at least one service first.'
+                : 'None of its services ('.implode(', ', $unmapped).') is a Sage ledger account type — subscribe it to a ledger service (e.g. Development Levy, Licence).';
+
+            return ['ok' => false, 'database' => $database,
+                'error' => "This council keeps properties as one Sage debtor account per service, so the property needs a ledger service to be created from. {$hint}"];
+        }
+
+        $sageAreaId = $this->resolveWardId($customer);
+        $currencyId = (int) (DB::connection(self::CONN)->table('Currency')
+            ->where('CurrencyCode', $customer->currency)->value('CurrencyLink') ?? 1);
+
+        $created = [];
+        $existing = [];
+
+        DB::connection(self::CONN)->transaction(function () use ($customer, $stand, $tokens, $sageAreaId, $currencyId, &$created, &$existing): void {
+            foreach (array_keys($tokens) as $token) {
+                $found = $this->existingLedgerAccount($stand, $token);
+                if ($found !== null) {
+                    $existing[] = $found;
+
+                    continue;
+                }
+
+                $template = $this->ledgerTemplate($token);
+                $account = $this->ledgerAccountCode($stand, $token, $template);
+
+                $this->createDebtor($customer, $account, $template, $sageAreaId, $currencyId);
+                $created[] = $account;
+            }
+        });
+
+        if ($created === []) {
+            return ['ok' => false, 'database' => $database,
+                'error' => 'Already in Sage — account(s) '.implode(', ', $existing)." exist in {$database}."];
+        }
+
+        return [
+            'ok' => true,
+            'mode' => 'ledger',
+            'database' => $database,
+            'stand' => $stand,
+            'created' => $created,
+            'existing' => $existing,
+            'unmapped' => $unmapped,
+        ];
+    }
+
+    /** An existing `{stand}-{token}-…` account, if the ledger already has one. */
+    private function existingLedgerAccount(string $stand, string $token): ?string
+    {
+        $prefix = $this->escapeLike("{$stand}-{$token}");
+
+        $account = DB::connection(self::CONN)->table('Client')
+            ->where(fn ($q) => $q
+                ->where('Account', "{$stand}-{$token}")
+                ->orWhere('Account', 'like', "{$prefix}-%"))
+            ->value('Account');
+
+        return $account !== null ? (string) $account : null;
+    }
+
+    /**
+     * A same-token debtor to copy the class / terms / portion convention from.
+     * Picks the token's dominant class so the new account bills like the rest
+     * (the class drives the control account and invoice item during posting).
+     */
+    private function ledgerTemplate(string $token): ?object
+    {
+        $conn = DB::connection(self::CONN);
+        $like = '%-'.$this->escapeLike($token).'-%';
+
+        $classId = $conn->table('Client')
+            ->where('Account', 'like', $like)
+            ->whereNotNull('iClassID')
+            ->groupBy('iClassID')
+            ->orderByRaw('count(*) desc')
+            ->value('iClassID');
+
+        $query = $conn->table('Client')->whereNotNull('iClassID');
+        if ($classId !== null) {
+            $query->where('Account', 'like', $like)->where('iClassID', $classId);
+        }
+
+        return $query->first(['Account', 'iClassID', 'iSettlementTermsID', 'iAgeingTermID',
+            'AccountTerms', 'iARPriceListNameID', 'RepID']);
+    }
+
+    /**
+     * The new account's code, keeping the token's existing portion suffix
+     * (e.g. "PLT006-ASSR-P1SP4" → new stands get "…-ASSR-P1SP4" too).
+     */
+    private function ledgerAccountCode(string $stand, string $token, ?object $template): string
+    {
+        $suffix = null;
+        if ($template !== null) {
+            $parts = explode('-', (string) $template->Account);
+            $suffix = isset($parts[2]) ? implode('-', array_slice($parts, 2)) : null;
+        }
+
+        return implode('-', array_filter([$stand, $token, $suffix], fn ($p) => $p !== null && $p !== ''));
+    }
+
+    /** Insert a `Client` debtor for the customer and return its DCLink. */
+    private function createDebtor(Customer $customer, string $account, ?object $template, ?int $sageAreaId, ?int $currencyId = null): int
+    {
+        $currencyId ??= (int) (DB::connection(self::CONN)->table('Currency')
+            ->where('CurrencyCode', $customer->currency)->value('CurrencyLink') ?? 1);
+
+        return (int) DB::connection(self::CONN)->table('Client')->insertGetId([
+            'Account' => $account,
+            'Name' => $customer->name,
+            'Physical1' => $customer->address,
+            'Telephone' => $customer->phone,
+            'EMail' => $customer->email,
+            'iCurrencyID' => $currencyId,
+            'iClassID' => $template->iClassID ?? null,
+            'iSettlementTermsID' => $template->iSettlementTermsID ?? 0,
+            'iAgeingTermID' => $template->iAgeingTermID ?? 1,
+            'iAreasID' => $sageAreaId,
+            'AccountTerms' => $template->AccountTerms ?? 0,
+            'iARPriceListNameID' => $template->iARPriceListNameID ?? null,
+            'RepID' => $template->RepID ?? null,
+            'UseEmail' => (bool) $customer->email,
+        ], 'DCLink');
+    }
+
+    /** The Sage ward id behind a ledger-imported O-Billing area ("ward:{id}" → {id}). */
+    private function resolveWardId(Customer $customer): ?int
+    {
+        $sageId = $customer->area?->sage_id;
+
+        return ($sageId !== null && str_starts_with($sageId, 'ward:'))
+            ? (int) substr($sageId, 5)
+            : null;
+    }
+
+    /** Escape SQL LIKE wildcards in a literal fragment. */
+    private function escapeLike(string $value): string
+    {
+        return str_replace(['[', '%', '_'], ['[[]', '[%]', '[_]'], $value);
     }
 }
