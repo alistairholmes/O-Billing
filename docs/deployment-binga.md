@@ -105,6 +105,16 @@ php artisan queue:work --queue=default --tries=3 --timeout=120
 ```
 This drains **non-Sage** jobs only. **It must never listen on `sage`.**
 
+### A6. Scheduler (recurring billing schedules)
+Add a third Railway service from the same image with start command:
+```
+php artisan schedule:work
+```
+This fires the hourly `billing:run-scheduled` command, which creates (and, for
+schedules with auto-post on, queues to Sage) the billing runs defined under
+**Billing → Billing schedules**. It needs **no Sage connection** — auto-post is
+dispatched to the `sage` queue and executed by the on-site worker.
+
 ---
 
 ## Part B — On-site Sage worker (Olimem's Binga server)

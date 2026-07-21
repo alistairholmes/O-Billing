@@ -2,10 +2,8 @@
 
 namespace App\Filament\Resources\BillingRuns\Schemas;
 
-use App\Models\Area;
+use App\Filament\Support\BillingScopeOptions;
 use App\Models\BillingRun;
-use App\Models\Customer;
-use App\Models\Service;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
@@ -49,7 +47,7 @@ class BillingRunForm
                     ->schema([
                         CheckboxList::make('service_ids')
                             ->label('Services')
-                            ->options(fn () => self::serviceOptions())
+                            ->options(fn () => BillingScopeOptions::services())
                             ->columns(2)
                             ->bulkToggleable()
                             ->searchable()
@@ -57,57 +55,25 @@ class BillingRunForm
                             ->helperText('Tick the services to bill. None ticked = all services.'),
                         Select::make('account_from')
                             ->label('From account')
-                            ->options(fn () => self::accountOptions())
+                            ->options(fn () => BillingScopeOptions::accounts())
                             ->searchable()
                             ->helperText('Optional: first account in the range.'),
                         Select::make('account_to')
                             ->label('To account')
-                            ->options(fn () => self::accountOptions())
+                            ->options(fn () => BillingScopeOptions::accounts())
                             ->searchable()
                             ->helperText('Optional: last account in the range.'),
                         Select::make('area_from_id')
                             ->label('From location')
-                            ->options(fn () => self::locationOptions())
+                            ->options(fn () => BillingScopeOptions::locations())
                             ->searchable()
                             ->helperText('Optional: first suburb in the range.'),
                         Select::make('area_to_id')
                             ->label('To location')
-                            ->options(fn () => self::locationOptions())
+                            ->options(fn () => BillingScopeOptions::locations())
                             ->searchable()
                             ->helperText('Optional: last suburb in the range.'),
                     ]),
             ]);
-    }
-
-    /** @return array<int, string> service id => "Group (Variant)" */
-    private static function serviceOptions(): array
-    {
-        return Service::query()
-            ->where('active', true)
-            ->with('serviceType')
-            ->get()
-            ->mapWithKeys(fn (Service $s) => [$s->id => $s->displayName()])
-            ->all();
-    }
-
-    /** @return array<string, string> account_number => "ACC-1001 — Name" */
-    private static function accountOptions(): array
-    {
-        return Customer::query()
-            ->orderBy('account_number')
-            ->get(['account_number', 'name'])
-            ->mapWithKeys(fn (Customer $c) => [$c->account_number => "{$c->account_number} — {$c->name}"])
-            ->all();
-    }
-
-    /** @return array<int, string> area id => suburb path label */
-    private static function locationOptions(): array
-    {
-        return Area::billingLevel()
-            ->with('parent')
-            ->orderBy('name')
-            ->get()
-            ->mapWithKeys(fn (Area $a) => [$a->id => $a->pathLabel()])
-            ->all();
     }
 }
