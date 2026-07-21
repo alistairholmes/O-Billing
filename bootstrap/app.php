@@ -11,6 +11,11 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Behind Railway's (or any) TLS-terminating proxy, trust the forwarded
+        // headers so Laravel/Filament generate correct https URLs and cookies
+        // are marked secure — otherwise assets, redirects and CSRF break.
+        $middleware->trustProxies(at: '*');
+
         // The app has no plain "login" route — authentication is handled by the
         // Filament panel, so guests hitting auth-protected routes (the PDF
         // document routes) are sent to the panel's login page.
