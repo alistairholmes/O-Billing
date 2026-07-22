@@ -16,6 +16,14 @@ return [
     'name' => env('APP_NAME', 'Laravel'),
 
     /*
+    | Panel branding — set per instance so each council shows its own name/logo.
+    | brand_logo is a URL or path (e.g. /binga-logo.png served from public/).
+    */
+    'brand_name' => env('APP_BRAND_NAME', 'Olimem O-Billing'),
+    'brand_logo' => env('APP_BRAND_LOGO'),
+    'brand_logo_height' => env('APP_BRAND_LOGO_HEIGHT', '2.5rem'),
+
+    /*
     |--------------------------------------------------------------------------
     | Application Environment
     |--------------------------------------------------------------------------

@@ -28,7 +28,9 @@ class AdminPanelProvider extends PanelProvider
             ->default()
             ->id('admin')
             ->path('admin')
-            ->brandName('Olimem O-Billing')
+            ->brandName(config('app.brand_name'))
+            ->brandLogo(config('app.brand_logo'))
+            ->brandLogoHeight(config('app.brand_logo_height'))
             ->login()
             ->registration()
             ->databaseNotifications() // worker reports queued Sage operation outcomes here
