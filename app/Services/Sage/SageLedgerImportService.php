@@ -46,16 +46,20 @@ final class SageLedgerImportService
 
     private array $warnings = [];
 
-    /** Friendly names for the known Gokwe South account-type tokens. */
+    /** Friendly names for the known account-type tokens (Gokwe + Binga). */
     private const TOKEN_SERVICES = [
         'ASSR' => 'Assessment Rates',
         'ASS' => 'Assessment Rates',
+        'AS' => 'Assessment Rates',
         'LIC' => 'Licence',
         'LICR' => 'Licence (Rural)',
         'DEVC' => 'Development Levy',
         'DEVR' => 'Development Levy (Rural)',
         'DEVM' => 'Development Levy (Mining)',
+        'LDL' => 'Land Development Levy',
         'LEAR' => 'Land Lease',
+        'LEA' => 'Land Lease',
+        'REF' => 'Refuse Collection',
         'STD' => 'Stand Charge',
     ];
 
@@ -275,15 +279,25 @@ final class SageLedgerImportService
 
     /**
      * The stand prefix and account-type token from a `{STAND}-{TYPE}-{portion}`
-     * account code. Accounts without a token fall back to "(other)".
+     * account code. The stand itself may contain hyphens (e.g. `BGATWN-345`,
+     * `MK010-W24`, `G123-BC013`), so the service token is the SECOND-TO-LAST
+     * segment and the stand is everything before it; the last segment is the
+     * portion. Accounts without a recognisable token fall back to "(other)".
      *
      * @return array{0:string, 1:string}
      */
     private function splitAccount(string $account): array
     {
-        $parts = explode('-', $account);
-        $prefix = trim($parts[0]);
-        $token = isset($parts[1]) ? strtoupper(trim($parts[1])) : '(other)';
+        $parts = array_map('trim', explode('-', $account));
+        $count = count($parts);
+
+        if ($count < 3) {
+            // No portion suffix: best effort {stand}-{token}, or just {stand}.
+            return [$parts[0], $count === 2 ? (strtoupper($parts[1]) ?: '(other)') : '(other)'];
+        }
+
+        $token = strtoupper($parts[$count - 2]);
+        $prefix = implode('-', array_slice($parts, 0, $count - 2));
 
         return [$prefix, $token ?: '(other)'];
     }
