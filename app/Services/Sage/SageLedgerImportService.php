@@ -186,7 +186,9 @@ final class SageLedgerImportService
             }
         }
         foreach (array_keys($allTokens) as $token) {
-            $this->ensureService($token);
+            // A purely numeric token (e.g. "123") becomes an int array key in PHP;
+            // ensureService() and the "LEDGER-{token}" code expect a string.
+            $this->ensureService((string) $token);
         }
 
         $now = now();
