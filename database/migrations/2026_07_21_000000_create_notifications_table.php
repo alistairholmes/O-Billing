@@ -19,7 +19,10 @@ return new class extends Migration
             $table->uuid('id')->primary();
             $table->string('type');
             $table->morphs('notifiable');
-            $table->text('data');
+            // JSON (not text): Filament's database notifications query the data
+            // column with the JSON operator data->>'format', which Postgres only
+            // allows on a json/jsonb column.
+            $table->jsonb('data');
             $table->timestamp('read_at')->nullable();
             $table->timestamps();
         });
