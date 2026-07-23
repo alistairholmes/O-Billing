@@ -227,13 +227,15 @@ class BillingEngineTest extends TestCase
             $period = now()->startOfMonth();
             $billing = app(BillingRunService::class);
 
-            // Two separate runs for the SAME period (e.g. an original and a correction).
+            // Two separate runs for the SAME period. The duplicate guard blocks
+            // this by default, so the second uses force — this test only cares
+            // that invoice numbers never collide.
             foreach (['BR-A', 'BR-B'] as $number) {
                 $run = BillingRun::create([
                     'municipality_id' => $municipality->id, 'run_number' => $number,
                     'period_month' => $period, 'frequency' => 'monthly',
                 ]);
-                $billing->generate($run);
+                $billing->generate($run, force: true);
             }
 
             // 4 invoices, all with distinct invoice numbers (no unique-constraint clash).

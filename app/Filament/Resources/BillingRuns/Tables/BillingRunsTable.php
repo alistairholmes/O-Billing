@@ -2,16 +2,11 @@
 
 namespace App\Filament\Resources\BillingRuns\Tables;
 
+use App\Filament\Resources\BillingRuns\Actions\GenerateBillingRunAction;
 use App\Filament\Resources\BillingRuns\Actions\PostToSageAction;
+use App\Filament\Resources\BillingRuns\Actions\ReverseBillingRunAction;
 use App\Models\BillingRun;
-use App\Services\Billing\BillingRunService;
-use App\Support\Currencies;
-use Filament\Actions\Action;
-use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
-use Filament\Actions\DeleteBulkAction;
-use Filament\Notifications\Notification;
-use Filament\Support\Icons\Heroicon;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 
@@ -38,7 +33,12 @@ class BillingRunsTable
                     ->toggleable(),
                 TextColumn::make('status')
                     ->badge()
-                    ->color(fn (string $state) => $state === 'completed' ? 'success' : 'gray'),
+                    ->color(fn (string $state) => match ($state) {
+                        'completed' => 'success',
+                        'reversed' => 'danger',
+                        default => 'gray',
+                    })
+                    ->tooltip(fn (BillingRun $r) => $r->isReversed() ? $r->reversal_reason : null),
                 TextColumn::make('invoice_count')
                     ->label('Invoices')
                     ->badge(),
@@ -52,34 +52,15 @@ class BillingRunsTable
                     ->toggleable(),
             ])
             ->recordActions([
-                Action::make('generate')
-                    ->label(fn (BillingRun $r) => $r->isCompleted() ? 'Re-run' : 'Generate invoices')
-                    ->icon(Heroicon::OutlinedPlayCircle)
-                    ->color('success')
-                    ->requiresConfirmation()
-                    ->modalHeading('Generate billing run')
-                    ->modalDescription('Creates invoices using the tariffs for each property\'s suburb, in their billing currency, honouring this run\'s scope (services, account range, location range) and frequency. Re-running replaces this run\'s existing invoices.')
-                    ->action(function (BillingRun $record): void {
-                        $result = app(BillingRunService::class)->generate($record);
-
-                        $totals = collect($result['currency_totals'])
-                            ->map(fn ($a, $c) => Currencies::format($a, $c))
-                            ->implode(', ');
-
-                        Notification::make()
-                            ->success()
-                            ->title('Billing run complete')
-                            ->body("{$result['invoice_count']} invoices generated. Total billed: ".($totals ?: '—'))
-                            ->send();
-                    }),
+                GenerateBillingRunAction::make(),
                 PostToSageAction::make(),
+                ReverseBillingRunAction::make(),
                 \Filament\Actions\ViewAction::make(),
-                DeleteAction::make(),
-            ])
-            ->toolbarActions([
-                BulkActionGroup::make([
-                    DeleteBulkAction::make(),
-                ]),
+                // Only never-generated drafts can be deleted outright. A completed
+                // run is undone with "Reverse run" (kept on record), and a run in
+                // Sage must be corrected there.
+                DeleteAction::make()
+                    ->visible(fn (BillingRun $r) => ! $r->isCompleted() && ! $r->isReversed() && ! $r->isInSage()),
             ]);
     }
 }

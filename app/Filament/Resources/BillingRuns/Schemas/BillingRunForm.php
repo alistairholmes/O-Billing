@@ -4,11 +4,14 @@ namespace App\Filament\Resources\BillingRuns\Schemas;
 
 use App\Filament\Support\BillingScopeOptions;
 use App\Models\BillingRun;
+use App\Services\Billing\BillingRunService;
+use Closure;
 use Filament\Forms\Components\CheckboxList;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Section;
+use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Schema;
 
 class BillingRunForm
@@ -35,7 +38,33 @@ class BillingRunForm
                             ->label('Billing period start')
                             ->helperText('Invoices are dated from this month.')
                             ->default(now()->startOfMonth())
-                            ->required(),
+                            ->required()
+                            // Early duplicate warning: refuse to save a run whose
+                            // scope overlaps a completed run for the same month
+                            // (generation applies the same guard authoritatively).
+                            ->rules([
+                                fn (Get $get, ?BillingRun $record): Closure => function (string $attribute, mixed $value, Closure $fail) use ($get, $record): void {
+                                    $probe = new BillingRun([
+                                        'period_month' => $value,
+                                        'frequency' => $get('frequency') ?? 'monthly',
+                                        'service_ids' => $get('service_ids') ?? [],
+                                        'account_from' => $get('account_from'),
+                                        'account_to' => $get('account_to'),
+                                        'area_from_id' => $get('area_from_id'),
+                                        'area_to_id' => $get('area_to_id'),
+                                    ]);
+
+                                    $conflicts = app(BillingRunService::class)->conflictingRuns($probe, $record?->id);
+
+                                    if ($conflicts->isNotEmpty()) {
+                                        $fail(
+                                            'Completed run(s) '.$conflicts->pluck('run_number')->implode(', ')
+                                            .' already bill an overlapping scope for this period (or were generated today).'
+                                            .' Reverse that run first if it was a mistake, or narrow this run\'s scope.'
+                                        );
+                                    }
+                                },
+                            ]),
                         TextInput::make('description')
                             ->placeholder('e.g. June 2026 monthly rates run')
                             ->maxLength(255),

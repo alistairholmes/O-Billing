@@ -8,11 +8,13 @@ use App\Models\Area;
 use App\Models\BillingRun;
 use App\Models\Customer;
 use App\Models\Invoice;
+use App\Models\Service;
 use App\Models\ServiceType;
 use App\Models\Tariff;
 use Brick\Math\RoundingMode;
 use Brick\Money\Money;
 use Illuminate\Support\Facades\DB;
+use LogicException;
 
 /**
  * Generates the invoices for a billing run: for every active customer, charge
@@ -43,14 +45,45 @@ final class BillingRunService
     /**
      * Calculate and persist all invoices for the run, then mark it completed.
      *
+     * Guarded against overcharging: refuses to run when another completed run
+     * already bills an overlapping scope for the same period (or was generated
+     * today), unless $force is passed. Concurrent generates for the same
+     * municipality are serialised by a row lock, so double-clicks and the
+     * scheduler can never both bill.
+     *
      * @return array{invoice_count:int, currency_totals:array<string,float>}
+     *
+     * @throws DuplicateBillingRunException when the run would double-bill
+     * @throws LogicException when the run is reversed or already in Sage
      */
-    public function generate(BillingRun $run): array
+    public function generate(BillingRun $run, bool $force = false): array
     {
         $municipality = $run->municipality;
-        $period = $run->period_month;
 
-        return DB::transaction(function () use ($run, $municipality, $period): array {
+        return DB::transaction(function () use ($run, $municipality, $force): array {
+            // Serialise per municipality: the row lock is held until commit, so
+            // two simultaneous generates cannot both pass the guards below.
+            DB::table('municipalities')->where('id', $municipality->id)->lockForUpdate()->first();
+            $run->refresh();
+            $period = $run->period_month;
+
+            if ($run->isReversed()) {
+                throw new LogicException(
+                    "Run {$run->run_number} was reversed; create a new run instead of re-running it."
+                );
+            }
+            if ($run->isInSage()) {
+                throw new LogicException(
+                    "Run {$run->run_number} has already been sent to Sage; re-running it would duplicate charges."
+                );
+            }
+            if (! $force) {
+                $conflicts = $this->conflictingRuns($run);
+                if ($conflicts->isNotEmpty()) {
+                    throw new DuplicateBillingRunException($run, $conflicts);
+                }
+            }
+
             // Clear any prior invoices for an idempotent re-run.
             $run->invoices()->each(fn (Invoice $i) => $i->delete());
 
@@ -89,6 +122,132 @@ final class BillingRunService
 
             return ['invoice_count' => $calc['invoice_count'], 'currency_totals' => $calc['currency_totals']];
         });
+    }
+
+    /**
+     * Reverse a completed run made by mistake: delete every invoice it
+     * generated so customers are not charged, and keep the run (with its counts
+     * and totals) marked "reversed" as an audit record. A run that has been
+     * queued or posted to Sage cannot be reversed here — the ledger entries
+     * already exist and must be corrected in Sage.
+     *
+     * @throws LogicException when the run is not completed or already in Sage
+     */
+    public function reverse(BillingRun $run, ?string $reason = null): void
+    {
+        DB::transaction(function () use ($run, $reason): void {
+            // Same per-municipality lock as generate(), so a reversal can never
+            // interleave with a generate or a second reversal.
+            DB::table('municipalities')->where('id', $run->municipality_id)->lockForUpdate()->first();
+            $run->refresh();
+
+            if (! $run->isCompleted()) {
+                throw new LogicException(
+                    "Only a completed run can be reversed; {$run->run_number} is {$run->status}."
+                );
+            }
+            if ($run->isInSage()) {
+                throw new LogicException(
+                    "Run {$run->run_number} has already been sent to Sage and cannot be reversed here. "
+                    .'Correct it in Sage with a credit note.'
+                );
+            }
+
+            $run->invoices()->each(fn (Invoice $i) => $i->delete());
+
+            $run->forceFill([
+                'status' => 'reversed',
+                'reversed_at' => now(),
+                'reversal_reason' => $reason,
+            ])->save();
+        });
+    }
+
+    /**
+     * Completed runs that would bill some customer for the same service twice
+     * if $run were generated: same billing month (or generated today) with an
+     * overlapping scope. Cadence-aware — a monthly and an annual run in the
+     * same period only conflict through services billable by both.
+     *
+     * @return \Illuminate\Database\Eloquent\Collection<int, BillingRun>
+     */
+    public function conflictingRuns(BillingRun $run, ?int $excludeId = null): \Illuminate\Database\Eloquent\Collection
+    {
+        $excludeId ??= $run->id;
+        $month = $run->period_month->copy()->startOfMonth();
+
+        return BillingRun::query()
+            ->where('status', 'completed')
+            ->when($excludeId !== null, fn ($q) => $q->whereKeyNot($excludeId))
+            ->where(function ($q) use ($month): void {
+                $q->whereBetween('period_month', [$month->toDateString(), $month->copy()->endOfMonth()->toDateString()])
+                    ->orWhereDate('run_at', now()->toDateString());
+            })
+            ->get()
+            ->filter(fn (BillingRun $other) => $this->wouldDoubleBill($run, $other))
+            ->values();
+    }
+
+    /** Whether the two runs' scopes overlap on accounts, locations AND services. */
+    private function wouldDoubleBill(BillingRun $a, BillingRun $b): bool
+    {
+        return $this->accountRangesOverlap($a, $b)
+            && $this->areaRangesOverlap($a, $b)
+            && $this->doubleBilledServiceExists($a, $b);
+    }
+
+    private function accountRangesOverlap(BillingRun $a, BillingRun $b): bool
+    {
+        // Ranges are string-compared, matching scopedCustomers(); null = open end.
+        if ($a->account_to !== null && $b->account_from !== null && strcmp($a->account_to, $b->account_from) < 0) {
+            return false;
+        }
+        if ($b->account_to !== null && $a->account_from !== null && strcmp($b->account_to, $a->account_from) < 0) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function areaRangesOverlap(BillingRun $a, BillingRun $b): bool
+    {
+        $aIds = $this->locationRangeAreaIds($a);
+        $bIds = $this->locationRangeAreaIds($b);
+
+        if ($aIds === null || $bIds === null) {
+            return true; // one of them covers all locations
+        }
+
+        return array_intersect($aIds, $bIds) !== [];
+    }
+
+    /**
+     * Whether at least one active service falls in both runs' service scopes AND
+     * would actually be billed by both. A service with no cadence is billed by
+     * every run; a cadenced service only by runs of its own frequency, so it is
+     * double-billed only when both runs share that frequency.
+     */
+    private function doubleBilledServiceExists(BillingRun $a, BillingRun $b): bool
+    {
+        $aIds = $this->serviceIdFilter($a);
+        $bIds = $this->serviceIdFilter($b);
+
+        return Service::with('serviceType')
+            ->where('active', true)
+            ->when($aIds !== null, fn ($q) => $q->whereIn('id', $aIds))
+            ->when($bIds !== null, fn ($q) => $q->whereIn('id', $bIds))
+            ->get()
+            ->contains(function (Service $service) use ($a, $b): bool {
+                $type = $service->serviceType;
+                if ($type === null || ! $type->active) {
+                    return false;
+                }
+
+                $cadence = $type->default_frequency;
+
+                return $cadence === null
+                    || ($cadence === $a->frequency && $a->frequency === $b->frequency);
+            });
     }
 
     /**

@@ -35,6 +35,8 @@ class BillingRun extends Model
             'currency_totals' => 'array',
             'invoice_count' => 'integer',
             'run_at' => 'datetime',
+            'posted_at' => 'datetime',
+            'reversed_at' => 'datetime',
         ];
     }
 
@@ -85,6 +87,17 @@ class BillingRun extends Model
     public function isCompleted(): bool
     {
         return $this->status === 'completed';
+    }
+
+    public function isReversed(): bool
+    {
+        return $this->status === 'reversed';
+    }
+
+    /** Whether the run has been queued for, or already posted to, Sage. */
+    public function isInSage(): bool
+    {
+        return in_array($this->posting_status, ['posting', 'posted'], true);
     }
 
     /** Per-currency totals rendered for display, e.g. "$5,786.10  •  ZWG 3,714.50". */
