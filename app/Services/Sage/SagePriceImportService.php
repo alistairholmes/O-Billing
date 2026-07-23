@@ -35,14 +35,17 @@ final class SagePriceImportService
     private const SAGE = 'sage';
 
     /**
-     * Billing cadence per account-type token. DELIBERATE ASSUMPTION (mirrors
-     * the earlier imports): rates/licences/levies/leases bill annually, the
-     * utility-style charges monthly. Adjust and re-run to change.
+     * Billing cadence per account-type token, per the council's gazetted
+     * tariff schedule ("Binga RDC 2026 Tariffs"): assessment rates and sewer
+     * are PER MONTH; licences are per quarter but Sage stores the monthly
+     * equivalent (schedule $75/quarter = Sage $25), so their stored amounts
+     * also bill monthly. Levies and property tax are per year. Leases carry
+     * no period on the schedule — treated as annual; confirm with the council.
      */
     private const TOKEN_FREQUENCIES = [
-        'ASS' => 'annually',
-        'AS' => 'annually',
-        'LIC' => 'annually',
+        'ASS' => 'monthly',
+        'AS' => 'monthly',
+        'LIC' => 'monthly',
         'LDL' => 'annually',
         'LEA' => 'annually',
         'PTX' => 'annually',
@@ -412,7 +415,7 @@ final class SagePriceImportService
             $this->unmatchedClasses[] = ['code' => $code, 'desc' => $classDescriptions[$code] ?? '', 'clients' => $count];
         }
 
-        $this->warnings[] = 'Cadence assumption: rates, licences, levies and leases bill ANNUALLY; refuse, sewer and rentals bill MONTHLY. Adjust TOKEN_FREQUENCIES in SagePriceImportService and re-run if the council bills differently.';
+        $this->warnings[] = 'Cadences follow the gazetted 2026 tariff schedule: assessment rates, licences, refuse, sewer and rentals bill MONTHLY (licence amounts are the monthly equivalent of the quarterly rate); levies and property tax bill ANNUALLY. Leases are treated as ANNUAL — the schedule gives no period; confirm with the council.';
         $this->warnings[] = 'Where a class matched two billables equally (e.g. communal vs stateland rates), the LOWER price was chosen as the conservative option — review and correct individual amounts in the panel if needed.';
 
         // Report lines, largest token first.
