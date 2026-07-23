@@ -91,8 +91,15 @@ Run migrations once (Railway one-off shell or a deploy command):
 ```
 php artisan migrate --force && php artisan config:cache && php artisan filament:optimize
 ```
-Create the first admin user (one-off shell): `php artisan tinker` →
-`User::create([...])` and attach the Binga municipality, or seed it.
+Create the first admin user (one-off shell — no tinker needed):
+```
+php artisan user:provision "Full Name" user@example.com --admin
+```
+This attaches the (single) Binga municipality automatically and prints a
+generated password once. Promote an existing user instead with
+`php artisan user:make-admin user@example.com`. Administrators can then
+provision further users from the panel's **Users** page (Administration
+group) — no shell required.
 
 ### A4. Domain
 Add the custom domain `binga.obilling.<domain>` to the web service and create the

@@ -15,7 +15,7 @@ class PanelSmokeTest extends TestCase
 
     public function test_authenticated_user_can_load_panel_pages_for_their_municipality(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->create(['is_admin' => true]);
         $municipality = Municipality::create(['name' => 'Smoke City', 'base_currency' => 'ZAR']);
         $user->municipalities()->attach($municipality);
 
@@ -48,6 +48,18 @@ class PanelSmokeTest extends TestCase
         $this->get("{$base}/post-billing-report")->assertSuccessful();
         $this->get("{$base}/invoices")->assertSuccessful();
         $this->get("{$base}/setup-wizard")->assertSuccessful();
+        $this->get("{$base}/users")->assertSuccessful();
+    }
+
+    public function test_non_admin_cannot_access_the_users_page(): void
+    {
+        $user = User::factory()->create(); // is_admin defaults to false
+        $municipality = Municipality::create(['name' => 'Smoke City', 'base_currency' => 'ZAR']);
+        $user->municipalities()->attach($municipality);
+
+        $this->actingAs($user)
+            ->get("/admin/{$municipality->id}/users")
+            ->assertForbidden();
     }
 
     public function test_user_cannot_access_a_municipality_they_do_not_belong_to(): void
