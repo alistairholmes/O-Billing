@@ -472,6 +472,19 @@ final class SagePriceImportService
                             ->update(['default_frequency' => $frequency]);
                     }
                 }
+
+                // The council bills all ledger services VAT-EXEMPT (their Sage
+                // invoice templates use tax type 7 across the board) — same as
+                // the charge-workbook importer.
+                DB::table('services')
+                    ->where('municipality_id', $this->municipalityId)
+                    ->whereIn('service_type_id', function ($q): void {
+                        $q->select('id')->from('service_types')
+                            ->where('municipality_id', $this->municipalityId)
+                            ->where('code', 'like', 'LEDGER-%');
+                    })
+                    ->where('taxable', true)
+                    ->update(['taxable' => false]);
             });
         }
 
