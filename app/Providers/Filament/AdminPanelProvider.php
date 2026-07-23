@@ -2,7 +2,6 @@
 
 namespace App\Providers\Filament;
 
-use App\Filament\Pages\Tenancy\RegisterMunicipality;
 use App\Http\Middleware\SyncCurrentMunicipality;
 use App\Models\Municipality;
 use Filament\Http\Middleware\Authenticate;
@@ -32,7 +31,6 @@ class AdminPanelProvider extends PanelProvider
             ->brandLogo(config('app.brand_logo'))
             ->brandLogoHeight(config('app.brand_logo_height'))
             ->login()
-            ->registration()
             ->databaseNotifications() // worker reports queued Sage operation outcomes here
             ->databaseNotificationsPolling('15s')
             ->colors([
@@ -40,7 +38,6 @@ class AdminPanelProvider extends PanelProvider
                 'gray' => Color::Slate,
             ])
             ->tenant(Municipality::class, slugAttribute: 'id')
-            ->tenantRegistration(RegisterMunicipality::class)
             ->tenantMiddleware([
                 SyncCurrentMunicipality::class,
             ], isPersistent: true)
