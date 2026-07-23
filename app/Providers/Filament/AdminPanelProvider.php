@@ -31,6 +31,7 @@ class AdminPanelProvider extends PanelProvider
             ->brandLogo(config('app.brand_logo'))
             ->brandLogoHeight(config('app.brand_logo_height'))
             ->login()
+            ->globalSearch(false) // per-table search covers it; the top-nav bar is clutter
             ->databaseNotifications() // worker reports queued Sage operation outcomes here
             ->databaseNotificationsPolling('15s')
             ->colors([
