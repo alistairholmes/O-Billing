@@ -44,6 +44,13 @@ abstract class SageJob implements ShouldQueue
 
     public function handle(): void
     {
+        // Sage jobs build large in-memory structures — posting a full billing
+        // run holds thousands of invoice documents plus the debtor/GL lookup
+        // maps at once. The worker's default 128M PHP limit OOM-kills the
+        // process silently (exit 255, no output), which looks like a hang.
+        // Raise it well within the container's RAM; override via env if needed.
+        ini_set('memory_limit', (string) env('SAGE_JOB_MEMORY_LIMIT', '2048M'));
+
         $operation = $this->operation->fresh() ?? $this->operation;
         $operation->markRunning();
 

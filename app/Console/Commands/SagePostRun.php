@@ -21,6 +21,10 @@ class SagePostRun extends Command
 
     public function handle(SageBillingRunPoster $poster): int
     {
+        // Building all the invoice documents + Sage lookup maps in memory
+        // exceeds PHP's default 128M; match the worker job's headroom.
+        ini_set('memory_limit', (string) env('SAGE_JOB_MEMORY_LIMIT', '2048M'));
+
         $runNumber = (string) $this->argument('run');
         $run = BillingRun::withoutGlobalScopes()->where('run_number', $runNumber)->first();
         if ($run === null) {
