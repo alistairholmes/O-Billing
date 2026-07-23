@@ -521,23 +521,38 @@ final class SagePriceImportService
     }
 
     /**
-     * Stand prefix + account-type token, identical to the ledger importer: the
-     * token is the second-to-last hyphen-separated segment.
+     * Stand prefix + account-type token, identical everywhere Sage account
+     * codes are parsed.
      *
      * @return array{0: string, 1: string}
      */
     private function splitAccount(string $account): array
     {
-        $parts = array_map('trim', explode('-', $account));
-        $count = count($parts);
+        return \App\Support\Sage\LedgerAccount::split($account);
+    }
 
-        if ($count < 3) {
-            return [$parts[0], $count === 2 ? (strtoupper($parts[1]) ?: '(other)') : '(other)'];
+    /**
+     * The auto-resolved billable item per Sage client class id, for the Sage
+     * posting writers: the same class → billable resolution that prices the
+     * customers, so posting bills each class through the very item it was
+     * priced from.
+     *
+     * @return array<int, string> class id => StkItem code
+     */
+    public function classItemMap(): array
+    {
+        $items = $this->billableItems();
+        $classes = $this->clientClasses();
+        $resolved = $this->resolveClassPrices($classes, $items);
+
+        $map = [];
+        foreach ($classes as $class) {
+            $code = strtoupper(trim((string) $class->Code));
+            if (isset($resolved[$code])) {
+                $map[(int) $class->IdCliClass] = $resolved[$code]['item'];
+            }
         }
 
-        $token = strtoupper($parts[$count - 2]);
-        $prefix = implode('-', array_slice($parts, 0, $count - 2));
-
-        return [$prefix, $token ?: '(other)'];
+        return $map;
     }
 }

@@ -300,11 +300,11 @@ final class SagePropertyWriter
      */
     private function ledgerAccountCode(string $stand, string $token, ?object $template): string
     {
-        $suffix = null;
-        if ($template !== null) {
-            $parts = explode('-', (string) $template->Account);
-            $suffix = isset($parts[2]) ? implode('-', array_slice($parts, 2)) : null;
-        }
+        // The trailing portion segment via the shared splitter — the template
+        // account's stand may itself contain hyphens (e.g. BGATWN-40-ASS-P3SP3).
+        $suffix = $template !== null
+            ? \App\Support\Sage\LedgerAccount::portion((string) $template->Account)
+            : null;
 
         return implode('-', array_filter([$stand, $token, $suffix], fn ($p) => $p !== null && $p !== ''));
     }

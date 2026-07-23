@@ -6,6 +6,7 @@ namespace App\Services\Sage;
 
 use App\Models\BillingRun;
 use App\Models\Invoice;
+use App\Support\Sage\LedgerAccount;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -290,7 +291,15 @@ final class SageBillingRunPoster
         // OPTION (RECOMPILE) nor ARITHABORT reliably cures. Fetching each table with
         // a plain, parameter-free SELECT (consistently a few ms) and joining in PHP
         // sidesteps it entirely.
-        $wanted = array_flip(array_values(array_unique($cfg['class_items'])));
+        // Which billable (StkItem) each client class bills through. Resolved the
+        // same way the class was priced (see SagePriceImportService), so every
+        // council's classes work without hand-mapping; the hand-maintained
+        // sage.posting.class_items entries still win where present.
+        $classItems = array_replace(
+            app(SagePriceImportService::class)->classItemMap(),
+            array_map(strval(...), (array) $cfg['class_items']),
+        );
+        $wanted = array_flip(array_values(array_unique($classItems)));
         $stockDetails = $conn->table('_etblStockDetails')->select('StockID', 'GroupID')->get()->keyBy('StockID');
         $groups = $conn->table('GrpTbl')->select('idGrpTbl', 'SalesAccLink')->get()->keyBy('idGrpTbl');
         $itemRows = [];
@@ -308,19 +317,21 @@ final class SageBillingRunPoster
             ];
         }
         $items = [];
-        foreach ($cfg['class_items'] as $classId => $itemCode) {
+        foreach ($classItems as $classId => $itemCode) {
             $items[$classId] = $itemRows[$itemCode] ?? null;
         }
 
-        // Debtor accounts: {stand}-{token}-… → client row (first wins on duplicates).
+        // Debtor accounts: {stand}-{token}-… → client row (first wins on
+        // duplicates). The stand may itself contain hyphens (BGATWN-40-ASS-…),
+        // so the shared splitter finds the token second-from-last — the same
+        // rule the ledger importer used to build the customer account numbers.
         $clients = [];
         foreach ($conn->table('Client')->select('DCLink', 'Account', 'iClassID', 'RepID', 'iARPriceListNameID')->cursor() as $c) {
-            $parts = explode('-', (string) $c->Account);
-            if (count($parts) < 2) {
+            [$stand, $token] = LedgerAccount::split((string) $c->Account);
+            if ($stand === '' || $token === '(other)') {
                 continue;
             }
-            $key = trim($parts[0]).'|'.strtoupper(trim($parts[1]));
-            $clients[$key] ??= $c;
+            $clients["{$stand}|{$token}"] ??= $c;
         }
 
         // --- One Sage invoice document per O-Billing invoice line.

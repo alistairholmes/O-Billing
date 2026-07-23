@@ -288,18 +288,7 @@ final class SageLedgerImportService
      */
     private function splitAccount(string $account): array
     {
-        $parts = array_map('trim', explode('-', $account));
-        $count = count($parts);
-
-        if ($count < 3) {
-            // No portion suffix: best effort {stand}-{token}, or just {stand}.
-            return [$parts[0], $count === 2 ? (strtoupper($parts[1]) ?: '(other)') : '(other)'];
-        }
-
-        $token = strtoupper($parts[$count - 2]);
-        $prefix = implode('-', array_slice($parts, 0, $count - 2));
-
-        return [$prefix, $token ?: '(other)'];
+        return \App\Support\Sage\LedgerAccount::split($account);
     }
 
     /** @param list<string> $tokens */

@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Filament\Resources\BillingRuns\Pages\ViewBillingRun;
-use App\Filament\Resources\Sage\Pages\ListClients;
-use App\Filament\Resources\Sage\Pages\ListServiceGroups;
 use App\Filament\Widgets\BillingIncomeByMonth;
 use App\Filament\Widgets\PropertyMix;
 use App\Filament\Widgets\RevenueByService;
@@ -24,6 +22,7 @@ use App\Models\ServiceType;
 use App\Models\User;
 use App\Services\Sage\SageBillingRunPoster;
 use App\Services\Sage\SagePropertyWriter;
+use App\Support\Sage\LedgerAccount;
 use App\Support\Tenancy\CurrentMunicipality;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -59,24 +58,14 @@ class SageIntegrationTest extends TestCase
         return [$muni, $user];
     }
 
-    public function test_sage_live_pages_and_import_page_render(): void
+    public function test_import_page_renders(): void
     {
+        // The live-Sage browser screens were dropped (see fd19f93); the import
+        // page is the remaining Sage-facing page.
         [$muni, $user] = $this->tenantUser();
         $this->actingAs($user);
 
-        $pages = [
-            "/admin/{$muni->id}/sage/properties",
-            "/admin/{$muni->id}/sage/clients",
-            "/admin/{$muni->id}/sage/areas",
-            "/admin/{$muni->id}/sage/service-groups",
-            "/admin/{$muni->id}/sage/tariffs",
-            "/admin/{$muni->id}/sage/billing-runs",
-            "/admin/{$muni->id}/import-from-sage",
-        ];
-
-        foreach ($pages as $url) {
-            $this->get($url)->assertOk();
-        }
+        $this->get("/admin/{$muni->id}/import-from-sage")->assertOk();
     }
 
     public function test_large_sage_tables_paginate_over_sql_server(): void
@@ -159,28 +148,6 @@ class SageIntegrationTest extends TestCase
         Livewire::test(RevenueOverview::class)->assertOk();
     }
 
-    public function test_view_modals_render_their_infolists(): void
-    {
-        [$muni, $user] = $this->tenantUser();
-        $this->actingAs($user);
-        filament()->setCurrentPanel(filament()->getPanel('admin'));
-        filament()->setTenant($muni);
-
-        // Mounting the view action builds and fills its infolist schema; if any
-        // entry referenced a broken relation it would throw here. assertOk()
-        // confirms the component (with the modal mounted) rendered cleanly. Client
-        // and Service are the populated Sage tables in this deployment.
-        $client = Client::query()->first();
-        Livewire::test(ListClients::class)
-            ->mountTableAction('view', $client->getKey())
-            ->assertOk();
-
-        $service = \App\Models\Sage\Service::query()->first();
-        Livewire::test(ListServiceGroups::class)
-            ->mountTableAction('view', $service->getKey())
-            ->assertOk();
-    }
-
     public function test_post_to_sage_action_mounts_with_live_preview(): void
     {
         [$muni, $user] = $this->tenantUser();
@@ -200,6 +167,35 @@ class SageIntegrationTest extends TestCase
             ->assertOk();
     }
 
+    /**
+     * A live ledger account whose class both auto-resolves to a billable and
+     * carries a debtors control account, so the poster can fully resolve it.
+     * Keeps these tests portable across council databases (Binga, Gokwe, …).
+     *
+     * @return array{0: string, 1: string, 2: string} [stand, token, name]
+     */
+    private function liveBillableAccount(): array
+    {
+        $map = app(\App\Services\Sage\SagePriceImportService::class)->classItemMap();
+
+        $rows = DB::connection('sage')->table('Client as c')
+            ->join('CliClass as cc', 'cc.IdCliClass', '=', 'c.iClassID')
+            ->whereIn('c.iClassID', array_keys($map))
+            ->where('cc.iAccountsIDControlAcc', '>', 0)
+            ->orderBy('c.Account')
+            ->limit(50)
+            ->get(['c.Account', 'c.Name']);
+
+        foreach ($rows as $row) {
+            [$stand, $token] = LedgerAccount::split((string) $row->Account);
+            if ($stand !== '' && $token !== '(other)') {
+                return [$stand, $token, trim((string) $row->Name) ?: 'Ratepayer'];
+            }
+        }
+
+        $this->fail('No billable ledger client with a resolvable class found in the connected Sage database.');
+    }
+
     public function test_billing_run_poster_preview_resolves_sage_accounts_without_writing(): void
     {
         [$muni] = $this->tenantUser();
@@ -211,16 +207,18 @@ class SageIntegrationTest extends TestCase
             $ward = Area::create([
                 'municipality_id' => $muni->id, 'area_type_id' => $areaType->id, 'name' => 'Njelele Plots',
             ]);
+            // A real account from the connected Sage ledger (read-only lookup).
+            [$stand, $token, $name] = $this->liveBillableAccount();
+
             $type = ServiceType::create([
-                'municipality_id' => $muni->id, 'name' => 'Assessment Rates', 'code' => 'LEDGER-ASSR',
+                'municipality_id' => $muni->id, 'name' => 'Assessment Rates', 'code' => "LEDGER-{$token}",
                 'billing_basis' => 'flat', 'default_frequency' => 'annually', 'active' => true,
             ]);
             $service = $type->ensureDefaultService();
 
-            // PLT006 exists in the live Sage ledger as PLT006-ASSR-… (read-only lookup).
             $customer = Customer::create([
-                'municipality_id' => $muni->id, 'area_id' => $ward->id, 'account_number' => 'PLT006',
-                'name' => 'Josiah Tanyara', 'type' => 'residential', 'currency' => 'USD', 'active' => true,
+                'municipality_id' => $muni->id, 'area_id' => $ward->id, 'account_number' => $stand,
+                'name' => $name, 'type' => 'residential', 'currency' => 'USD', 'active' => true,
             ]);
             $run = BillingRun::create([
                 'municipality_id' => $muni->id, 'run_number' => 'BR-POST-TEST', 'period_month' => now()->startOfMonth(),
@@ -334,16 +332,18 @@ class SageIntegrationTest extends TestCase
             $ward = Area::create([
                 'municipality_id' => $muni->id, 'area_type_id' => $areaType->id, 'name' => 'Njelele Plots',
             ]);
+            // A real account from the connected Sage ledger (read-only lookup).
+            [$stand, $token, $name] = $this->liveBillableAccount();
+
             $type = ServiceType::create([
-                'municipality_id' => $muni->id, 'name' => 'Assessment Rates', 'code' => 'LEDGER-ASSR',
+                'municipality_id' => $muni->id, 'name' => 'Assessment Rates', 'code' => "LEDGER-{$token}",
                 'billing_basis' => 'flat', 'default_frequency' => 'annually', 'active' => true,
             ]);
             $service = $type->ensureDefaultService();
 
-            // PLT006 exists in the live Sage ledger as PLT006-ASSR-… (read-only lookup).
             $customer = Customer::create([
-                'municipality_id' => $muni->id, 'area_id' => $ward->id, 'account_number' => 'PLT006',
-                'name' => 'Josiah Tanyara', 'type' => 'residential', 'currency' => 'USD', 'active' => true,
+                'municipality_id' => $muni->id, 'area_id' => $ward->id, 'account_number' => $stand,
+                'name' => $name, 'type' => 'residential', 'currency' => 'USD', 'active' => true,
             ]);
             $run = BillingRun::create([
                 'municipality_id' => $muni->id, 'run_number' => 'BR-POST-ONE', 'period_month' => now()->startOfMonth(),
