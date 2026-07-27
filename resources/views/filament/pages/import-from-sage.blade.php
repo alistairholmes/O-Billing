@@ -4,11 +4,6 @@
         <x-slot name="description">Sage Evolution → O-Billing master-data import</x-slot>
 
         <div class="prose prose-sm max-w-none dark:prose-invert">
-            <p>
-                This reads the live Sage Evolution (CCG Enterprise Billing) company database
-                <strong>{{ config('database.connections.sage.database') }}</strong> and copies its master data
-                into O-Billing so it appears in the normal <em>Billing</em> screens:
-            </p>
             <ul>
                 <li><strong>Areas</strong> — the region/district/suburb hierarchy (suburbs are the billing level)</li>
                 <li><strong>Properties &amp; customers</strong> — one account per property, with valuation and owner</li>
