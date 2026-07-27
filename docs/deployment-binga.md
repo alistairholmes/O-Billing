@@ -127,7 +127,27 @@ php artisan schedule:work
 This fires the hourly `billing:run-scheduled` command, which creates (and, for
 schedules with auto-post on, queues to Sage) the billing runs defined under
 **Billing → Billing schedules**. It needs **no Sage connection** — auto-post is
-dispatched to the `sage` queue and executed by the on-site worker.
+dispatched to the `sage` queue and executed by the Sage worker.
+
+### A7. Cloud Sage worker — and its REGION (biggest posting-speed lever)
+Add a Railway service from the **worker image** (`docker/worker.Dockerfile`)
+draining only the `sage` queue:
+```
+php artisan queue:work --queue=sage --tries=1 --timeout=0
+```
+Env: `DB_URL` (Railway Postgres), the `SAGE_DB_*` set (reaching Sage through the
+Tailscale/VPS tunnel), `DB_QUEUE_RETRY_AFTER=14400`, `SAGE_JOB_MEMORY_LIMIT=2048M`,
+optionally `SAGE_POST_BATCH` (default 100). This is the only service that posts
+to Sage; keep it separate from the default worker (A5).
+
+> **Set this worker's region to EU (europe-west / Amsterdam), never US.**
+> The Sage tunnel enters through the Contabo VPS in **Germany**, so worker↔Sage
+> latency is dominated by how far the worker is from that VPS. Measured on Binga:
+> a Sage round-trip is **~29 ms from EU-West vs ~184 ms from US-East — 6× faster**.
+> A full ~3,500-document billing run posts in **~15 min from EU vs ~2.5 h from
+> US**. Posting is thousands of sequential round-trips, so this single region
+> setting matters more than any code change. Apply it to **every** council whose
+> tunnel enters via the same VPS (Gokwe South included).
 
 ---
 

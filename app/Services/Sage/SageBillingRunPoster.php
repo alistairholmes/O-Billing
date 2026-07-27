@@ -135,6 +135,24 @@ final class SageBillingRunPoster
             "SELECT ISNULL(MAX(TRY_CAST(LEFT(cAuditNumber, NULLIF(CHARINDEX('.', cAuditNumber), 0) - 1) AS int)), 0) AS n FROM PostGL"
         )->n;
 
+        // Trust StDfTbl.InvNum as the authoritative next invoice number, so we can
+        // drop the per-document existence check — one saved round-trip per
+        // document, which dominates posting time. Reconcile the counter ONCE here
+        // in case it lags the highest number actually present (a gap), which would
+        // otherwise collide on the unique InvNumber; thereafter each batch reads
+        // (and advances) it under the StDfTbl lock.
+        $conn->transaction(function () use ($conn): void {
+            $stdf = $conn->selectOne('SELECT idStDfTbl, InvPref, InvNum FROM StDfTbl WITH (UPDLOCK) ORDER BY idStDfTbl');
+            $prefix = (string) $stdf->InvPref;
+            $maxSeq = (int) $conn->selectOne(
+                'SELECT ISNULL(MAX(TRY_CAST(SUBSTRING(InvNumber, ?, 50) AS int)), 0) AS n FROM InvNum WHERE InvNumber LIKE ?',
+                [strlen($prefix) + 1, $prefix.'%'],
+            )->n;
+            if ($maxSeq + 1 > (int) $stdf->InvNum) {
+                $conn->table('StDfTbl')->where('idStDfTbl', $stdf->idStDfTbl)->update(['InvNum' => (string) ($maxSeq + 1)]);
+            }
+        });
+
         $posted = 0;
         $skipped = 0;
         $firstInv = null;
@@ -166,23 +184,20 @@ final class SageBillingRunPoster
                 $wrote = 0;
 
                 foreach ($batch as $obNumber) {
+                    // Resume skip: invoices already in Sage (from an interrupted
+                    // earlier run) were captured in $alreadyPosted before the loop.
+                    // No per-invoice re-query here — this run is the only poster.
                     if (isset($alreadyPosted[(string) $obNumber])) {
-                        $skipped++;
-
-                        continue;
-                    }
-                    // Race-safety: another poster may have committed this invoice
-                    // between the pre-check and this lock.
-                    if ($conn->table('InvNum')->where('ExtOrderNum', $obNumber)->exists()) {
                         $skipped++;
 
                         continue;
                     }
 
                     foreach ($byInvoice[$obNumber] as $doc) {
-                        do {
-                            $invNumber = $stdf->InvPref.str_pad((string) $seq++, (int) $stdf->InvPad, '0', STR_PAD_LEFT);
-                        } while ($conn->table('InvNum')->where('InvNumber', $invNumber)->exists());
+                        // StDfTbl.InvNum was reconciled up front and is advanced
+                        // under lock per batch, so the number is free — no per-doc
+                        // existence check (the unique index is the final backstop).
+                        $invNumber = $stdf->InvPref.str_pad((string) $seq++, (int) $stdf->InvPad, '0', STR_PAD_LEFT);
                         $firstInv ??= $invNumber;
                         $lastInv = $invNumber;
                         $auditNumber = $audit++.'.0001';
