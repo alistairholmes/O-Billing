@@ -42,6 +42,14 @@ class BillingRunsTable
                 TextColumn::make('invoice_count')
                     ->label('Invoices')
                     ->badge(),
+                TextColumn::make('posting_status')
+                    ->label('Sage posting')
+                    ->badge()
+                    ->state(fn (BillingRun $r) => $r->postingLabel())
+                    ->color(fn (BillingRun $r) => $r->postingColor())
+                    ->tooltip(fn (BillingRun $r) => $r->isPostingIncomplete()
+                        ? 'The last posting attempt was interrupted. Use "Resume posting to Sage" to finish it — already-posted invoices are skipped.'
+                        : null),
                 TextColumn::make('total_billed')
                     ->label('Total billed')
                     ->state(fn (BillingRun $r) => $r->formattedCurrencyTotals()),

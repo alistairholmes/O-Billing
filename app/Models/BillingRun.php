@@ -100,6 +100,34 @@ class BillingRun extends Model
         return in_array($this->posting_status, ['posting', 'posted'], true);
     }
 
+    /** Whether a posting attempt was interrupted and can be resumed. */
+    public function isPostingIncomplete(): bool
+    {
+        return $this->posting_status === 'failed';
+    }
+
+    /** Human label for the run's Sage posting state (shown on the runs table). */
+    public function postingLabel(): string
+    {
+        return match ($this->posting_status) {
+            'posted' => 'Posted',
+            'posting' => 'Posting…',
+            'failed' => 'Interrupted — resume',
+            default => 'Not posted',
+        };
+    }
+
+    /** Filament badge colour for the posting state. */
+    public function postingColor(): string
+    {
+        return match ($this->posting_status) {
+            'posted' => 'success',
+            'posting' => 'info',
+            'failed' => 'warning',
+            default => 'gray',
+        };
+    }
+
     /** Per-currency totals rendered for display, e.g. "$5,786.10  •  ZWG 3,714.50". */
     public function formattedCurrencyTotals(): string
     {
