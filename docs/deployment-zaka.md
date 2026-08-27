@@ -11,8 +11,8 @@ reasoning behind each service — this file only carries Zaka's specifics.
 |---|---|
 | Council | Zaka Rural District Council (Masvingo Province) |
 | Branch | `zaka` (fast-forward mirror of `main`) |
-| Railway project | `132dd488-6c72-4860-86da-9be498656bd6` (env `9f12c910-f445-49a8-8d76-52692d8aaa72`) |
-| Railway account | `alistair.holmes@olimement.com` — **not** `olimemdevelopers@gmail.com` |
+| Railway project | `chic-unity` — `132dd488-6c72-4860-86da-9be498656bd6` (env `9f12c910-f445-49a8-8d76-52692d8aaa72`) |
+| Railway account | the `alistairholmes` **GitHub** login — **not** `olimemdevelopers@gmail.com` |
 | Domain | `billing.zakardc.co.zw` |
 | Municipality code | `ZRDC` |
 | Sage | **not yet provisioned**, and on a **different VPS** to Binga's — see [Part C](#part-c--sage-pending) |
@@ -22,15 +22,49 @@ reasoning behind each service — this file only carries Zaka's specifics.
 ## Part A — Cloud app on Railway
 
 Four services, all from the `zaka` branch of
-`Olimem-Enterprise-Solutions/O-Billing`.
+`Olimem-Enterprise-Solutions/O-Billing`. **A1–A5 are provisioned and live** as of
+2026-08-27; A6 is deliberately not built yet.
+
+| Service | Id | Role |
+|---|---|---|
+| `Postgres` | `6f248b29-72f5-4303-a6ee-f3010f7a2c28` | database |
+| `obilling` | `726efc9f-96e0-45e0-9a04-83b04e9c9300` | web (A2) |
+| `obilling-worker` | `a45bdd4a-d5e0-49bb-a85e-d52fb95f6b35` | default queue (A4) |
+| `obilling-scheduler` | `4ce97b1b-1f80-4c5b-aac8-b4ca98905976` | `schedule:work` (A5) |
+
+> **The `railway` CLI cannot do all of this.** Its interactive-login token is
+> rejected (`Unauthorized`) for creating repo-linked services, setting a
+> service's deploy branch, and adding domains — though `whoami`, `list`,
+> `add --database`, `variables` and `ssh` all work fine. For the rest, call the
+> GraphQL API directly with the **`accessToken`** (not `token`) from
+> `~/.railway/config.json`:
+>
+> ```
+> TOKEN=$(python3 -c "import json;print(json.load(open('$HOME/.railway/config.json'))['user']['accessToken'])")
+> curl -sS -X POST https://backboard.railway.com/graphql/v2 \
+>   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"query":"..."}'
+> ```
+>
+> The useful mutations are `serviceCreate`, `serviceConnect` (repo **and**
+> branch), `serviceInstanceUpdate` (`startCommand`, `region`),
+> `customDomainCreate` and `serviceDomainCreate`. Introspect an input type with
+> `{__type(name:"XInput"){inputFields{name}}}` — the shapes are not documented.
+>
+> Two traps worth knowing. `serviceCreate` accepts a `branch` argument but does
+> **not** honour it — the service's first deploy still comes from the repo's
+> default branch, so always follow up with `serviceConnect` and then verify via
+> `service{repoTriggers{edges{node{branch}}}}`. And the branch does *not* live on
+> `ServiceInstanceUpdateInput`, whose `source` field only carries `image`/`repo`;
+> reaching for it there returns a bare "Problem processing request".
 
 ### A1. Postgres
 
-Add a **PostgreSQL** database to the project. Everything else references it as
-`${{Postgres.DATABASE_URL}}`; the external `DATABASE_PUBLIC_URL` is only needed
-if something outside Railway has to connect.
+Add a **PostgreSQL** database to the project (`railway add --database postgres`
+works). Everything else references it as `${{Postgres.DATABASE_URL}}`; the
+external `DATABASE_PUBLIC_URL` is only needed if something outside Railway has
+to connect.
 
-### A2. Web service (`O-Billing`)
+### A2. Web service (`obilling`)
 
 Deploy the repo with Railway's **default builder (Railpack)** — no root
 `Dockerfile`. The web image deliberately has **no SQL Server driver**; the cloud
@@ -59,24 +93,37 @@ decrypt the same queue payloads.
 > `APP_NAME`, `APP_URL` and the three `APP_BRAND_*` vars by eye before go-live.
 > Gokwe South shipped with Binga's branding for exactly this reason.
 
-Then, once: migrate and create the first admin.
+**Railpack runs `php artisan migrate --force` itself on every deploy** — its
+Laravel provider detects the app and does it, so the schema was already in place
+before anyone ran a command by hand. Don't add a migrate step expecting it to be
+the first one; `migrate:status` is the honest way to check.
+
+The one thing that *is* manual is the first admin, since the first login has to
+come from somewhere:
 
 ```
-php artisan migrate --force && php artisan config:cache && php artisan filament:optimize
-php artisan user:provision "Full Name" user@example.com --admin
+railway ssh --service obilling 'php artisan user:provision "Full Name" user@example.com --admin'
 ```
 
-`user:provision` prints a generated password once and attaches the municipality
-automatically. Further users are provisioned from the panel's **Users** page.
+It prints a generated password once. On a fresh install there is no municipality
+yet — that's expected, and Filament prompts to register one on first login.
+Further users come from the panel's **Users** page.
 
 ### A3. Domain
 
-Add `billing.zakardc.co.zw` to the web service and create the CNAME Railway
-gives you in the `zakardc.co.zw` zone. TLS is automatic.
+`billing.zakardc.co.zw` is registered on the web service. Create this record in
+the `zakardc.co.zw` zone — TLS follows automatically once it resolves:
 
-### A4. Default-queue worker
+| Type | Host | Value |
+|---|---|---|
+| CNAME | `billing` | `9silovqy.up.railway.app` |
 
-Second service, same source, start command:
+Railway also issued `obilling-production.up.railway.app`, which works right now
+and is handy for testing ahead of DNS.
+
+### A4. Default-queue worker (`obilling-worker`)
+
+Second service, same source and same variables as A2, start command:
 
 ```
 php artisan queue:work --queue=default --tries=3 --timeout=120
@@ -84,9 +131,9 @@ php artisan queue:work --queue=default --tries=3 --timeout=120
 
 **Never let this service listen on `sage`.**
 
-### A5. Scheduler
+### A5. Scheduler (`obilling-scheduler`)
 
-Third service, same source:
+Third service, same source and variables:
 
 ```
 php artisan schedule:work
@@ -169,10 +216,35 @@ When Sage does arrive, the remaining work is:
 
 ## Verification
 
-- `https://billing.zakardc.co.zw/admin` loads, logs in, tenant reads **Zaka**.
-- The sidebar shows Zaka's crest and `Zaka Rural District Council` — not Binga's.
-- No `SAGE_*` variable exists on the web, default-worker or scheduler services.
+Confirmed on 2026-08-27:
+
+- All four services deploy `SUCCESS` from branch `zaka`.
+- `/admin/login` returns 200; the page carries
+  `alt="Zaka Rural District Council logo"`, `src="/zaka-logo.png"` and
+  `height: 2.75rem`, and `/zaka-logo.png` serves 41,663 bytes of `image/png`.
+- `migrate:status` shows all 26 migrations `Ran` in batch 1 against
+  `pgsql` / `postgres.railway.internal` / `railway`.
+- The three app services carry an identical `APP_KEY` and **no** `SAGE_*`
+  variable.
+
+Still to confirm once DNS and mail are in place:
+
+- `https://billing.zakardc.co.zw/admin` resolves and serves the same page.
+- First login registers the municipality; tenant then reads **Zaka**.
 - A schedule created under **Billing → Billing schedules** fires within the hour.
+- A password-reset mail actually arrives (needs `MAIL_*`, see below).
+
+## Outstanding
+
+1. **`MAIL_*` is unset on all three app services.** Password resets and
+   notification mail will fail until the council's SMTP is filled in.
+2. **The CNAME is not created yet** (A3) — until it is, use
+   `obilling-production.up.railway.app`.
+3. **Sage**, in full — see Part C.
+
+Not a problem, but worth knowing: Railpack resolves PHP **8.2.33**, because
+`composer.json` asks for `^8.2`. The Sage worker image is pinned to 8.4. Binga
+resolves the same way, so Zaka is consistent with it rather than divergent.
 
 ## Shipping changes
 
