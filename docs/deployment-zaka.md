@@ -105,9 +105,45 @@ come from somewhere:
 railway ssh --service obilling 'php artisan user:provision "Full Name" user@example.com --admin'
 ```
 
-It prints a generated password once. On a fresh install there is no municipality
-yet — that's expected, and Filament prompts to register one on first login.
-Further users come from the panel's **Users** page.
+It prints a generated password once. Further users come from the panel's
+**Users** page.
+
+**The municipality has to exist before anyone can log in.** Tenant registration
+was removed from the panel in `c9cf004` ("councils are created by the Sage
+import"), so on a council with no Sage there is no screen that creates the first
+one — and a user with no tenant gets a **404 immediately after logging in**,
+because `/admin` redirects to `/admin/{tenantId}` and there is no tenant to
+redirect to. Zaka hit exactly this.
+
+For a Sage-less council, create it directly and attach the users:
+
+```php
+$municipality = App\Models\Municipality::firstOrCreate(['code' => 'ZRDC'], [
+    'name' => 'Zaka Rural District Council',
+    'base_currency' => 'USD',
+    'supported_currencies' => ['USD', 'ZWG'],
+    'tax_rate' => 0.15,          // stored as a fraction, not a percentage
+    'tax_label' => 'VAT',
+    'active' => true,
+]);
+
+foreach (App\Models\User::all() as $user) {
+    $user->municipalities()->syncWithoutDetaching([$municipality->id]);
+}
+
+// Baseline area types + services, as RegisterMunicipality used to seed.
+app(App\Support\Tenancy\CurrentMunicipality::class)->runFor($municipality->id, function () use ($municipality) {
+    if (App\Models\AreaType::count() === 0) {
+        App\Support\DefaultSetup::seed($municipality);
+    }
+});
+```
+
+Leave `setup_completed_at` null so the Setup Wizard still runs. Run it through
+`railway ssh --service obilling`, writing the script to a file and invoking
+`php artisan tinker --execute='require "/tmp/bootstrap.php";'` — bare
+`php artisan tinker <file>` executes the file but then drops into the REPL and
+hangs a non-interactive session.
 
 ### A3. Domain
 
@@ -227,10 +263,14 @@ Confirmed on 2026-08-27:
 - The three app services carry an identical `APP_KEY` and **no** `SAGE_*`
   variable.
 
+- Municipality `#1 Zaka Rural District Council (ZRDC)` exists — USD/ZWG, VAT
+  15%, 4 area types, 4 service types, setup wizard not yet run — and the admin
+  user resolves it (`canAccessTenant = true`).
+- Authenticated, `/admin` redirects to `/admin/1` and `/admin/1` returns **200**.
+
 Still to confirm once DNS and mail are in place:
 
 - `https://billing.zakardc.co.zw/admin` resolves and serves the same page.
-- First login registers the municipality; tenant then reads **Zaka**.
 - A schedule created under **Billing → Billing schedules** fires within the hour.
 - A password-reset mail actually arrives (needs `MAIL_*`, see below).
 

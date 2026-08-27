@@ -66,8 +66,15 @@ class UserProvision extends Command
         if ($wanted === []) {
             $all = Municipality::all();
             if ($all->count() <= 1) {
-                // Single-tenant install, or a fresh one with no municipality
-                // yet — Filament will prompt the first login to register it.
+                // Single-tenant install, or a fresh one with no municipality at
+                // all. The latter leaves the user tenant-less, and the panel
+                // 404s straight after login: tenant registration was removed in
+                // c9cf004, so there is no screen that creates the first one.
+                if ($all->isEmpty()) {
+                    $this->warn('No municipality exists yet, so this user will have no tenant and the panel will 404 after login.');
+                    $this->warn('Create one first — via the Sage ledger import, or directly for a council with no Sage.');
+                }
+
                 return $all;
             }
 
