@@ -250,6 +250,51 @@ When Sage does arrive, the remaining work is:
 
 ---
 
+## Part D — Demo data and test access (REMOVE BEFORE GO-LIVE)
+
+Seeded 2026-08-28 so the panel has something to show before Zaka's real
+ratepayers exist. **None of it should survive go-live.**
+
+- **38 customers**, every account number prefixed `DEMO-`, across 7 billing
+  wards under Masvingo → Zaka → {Jerera Growth Point, Ndanga, Musiso}.
+  48 tariffs; business centres bill USD + ZWG, rural wards USD only.
+- **2 completed monthly runs**, 38 invoices each — July (backdated) and the
+  current month.
+- **A test administrator, `test@obilling.test`, password `password`.**
+
+> The ward and township names are **placeholders**. Jerera, Ndanga and Musiso
+> are real Zaka localities, but the ward breakdown under them is invented —
+> replace the whole area tree from the council's valuation roll rather than
+> correcting it in place.
+
+Two things worth knowing about seeding runs. `BillingRunService::generate()`
+refuses a second full-scope run on the same calendar day —
+`conflictingRuns()` matches on `orWhereDate('run_at', today)`, not just on
+period — so seeding "last month" and "this month" back to back throws
+`DuplicateBillingRunException`. Backdating the earlier run's `run_at` into its
+own period clears it, and is what history should look like anyway. Don't reach
+for `generate($run, force: true)`; that switch exists to override the
+double-billing guard, not to make seeding convenient.
+
+To clear it all before importing real ratepayers:
+
+```php
+app(App\Support\Tenancy\CurrentMunicipality::class)->runFor($municipalityId, function () {
+    App\Models\Invoice::query()->delete();      // invoice_lines cascade
+    App\Models\BillingRun::query()->delete();
+    App\Models\Customer::query()->delete();     // customer_service cascades
+    App\Models\Tariff::query()->delete();
+    App\Models\Area::query()->delete();
+});
+
+App\Models\User::where('email', 'test@obilling.test')->delete();
+```
+
+This leaves the municipality, the area types and service types from
+`DefaultSetup`, and the real admin users intact.
+
+---
+
 ## Verification
 
 Confirmed on 2026-08-27:
@@ -276,11 +321,14 @@ Still to confirm once DNS and mail are in place:
 
 ## Outstanding
 
-1. **`MAIL_*` is unset on all three app services.** Password resets and
+1. **Purge the demo data and delete `test@obilling.test`** — Part D. This one
+   gates the CNAME: a `password` login must not be reachable on a public
+   hostname.
+2. **`MAIL_*` is unset on all three app services.** Password resets and
    notification mail will fail until the council's SMTP is filled in.
-2. **The CNAME is not created yet** (A3) — until it is, use
+3. **The CNAME is not created yet** (A3) — until it is, use
    `obilling-production.up.railway.app`.
-3. **Sage**, in full — see Part C.
+4. **Sage**, in full — see Part C.
 
 Not a problem, but worth knowing: Railpack resolves PHP **8.2.33**, because
 `composer.json` asks for `^8.2`. The Sage worker image is pinned to 8.4. Binga
