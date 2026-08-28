@@ -190,16 +190,17 @@ php artisan queue:work --queue=sage --tries=1 --timeout=0
 Extra env on this service only: the `SAGE_DB_*` set, plus
 `DB_QUEUE_RETRY_AFTER=14400` and `SAGE_JOB_MEMORY_LIMIT=2048M`.
 
-> **Put this service in the Railway region closest to Zaka's own VPS.** Zaka's
-> Sage sits on a **different VPS to Binga's**, so do not copy Binga's
-> `europe-west` blindly — look up where Zaka's VPS actually is, then pick the
-> nearest region.
+> **Put this service in the Railway region closest to Zaka's Sage VPS** (Part C).
+> Posting is thousands of sequential round-trips, so worker↔Sage distance
+> dominates everything else. Measured on Binga, whose Sage VPS is in Germany:
+> ~29 ms/round-trip from EU-West vs ~184 ms from US-East — 6×, or ~15 min vs
+> ~2.5 h on a 3,500-document run.
 >
-> This one setting is the biggest posting-speed lever there is, because posting
-> is thousands of sequential round-trips and the round-trip is dominated by
-> worker↔VPS distance. Measured on Binga (VPS in Germany): ~29 ms/round-trip
-> from EU-West vs ~184 ms from US-East — 6×, which was ~15 min vs ~2.5 h on a
-> 3,500-document run. Same physics, different geography, for Zaka.
+> That measurement compares two **European** endpoints. It is not evidence that
+> a distant Sage can be made fast by picking a region: no Railway region is near
+> Zimbabwe, so if Zaka's Sage ever sat on the council LAN, every region would be
+> ~180 ms away and a full run would take hours. Co-location is the lever, not
+> the region setting on its own.
 
 `DB_QUEUE_RETRY_AFTER=14400` is required on **any** service that runs `sage`
 jobs — the default 90 s makes the queue declare a long posting job dead
@@ -223,22 +224,49 @@ crest, not a wide wordmark, so it needs a little more height to read.
 
 ## Part C — Sage (pending)
 
-**Zaka has no Sage database linked yet, and its Sage will live on a different
-VPS to Binga's.** Binga's Contabo box (`161.97.178.181:1433`) is not the target —
-confirmed on 2026-08-27 that it hosts only Binga's companies. Zaka gets its own
-host, its own tunnel, and its own worker region.
+Zaka's Sage currently runs on a **council-owned** machine on the Zaka LAN,
+reachable only by AnyDesk. That machine is out of bounds for our code: council
+IT administers it, so an on-site worker would put O-Billing's source on
+hardware we don't control. Decided 2026-08-28 to follow **Binga's model
+instead — host Zaka's Sage on an Olimem VPS** and run the Sage worker beside it.
 
-Until that VPS exists and the council's Sage Evolution company is restored onto
-it, do **not** create the A6 worker and do **not** set any `SAGE_*` variables.
-The app runs fine without them: billing runs generate and sit at
-`posting_status = pending`.
+This is a hosting decision, not a networking one. Tunnelling to the council LAN
+was considered and rejected: no cloud region is near Masvingo, so a remote
+worker sits ~180 ms from Sage whatever the transport, and a 3,500-document run
+takes hours. Sage and the worker have to be co-located; everything else is
+detail.
 
-When Sage does arrive, the remaining work is:
+**Nothing here is built yet.** Until it is, do not create the A6 worker and do
+not set any `SAGE_*` variables. The app runs fine without them — billing runs
+generate and sit at `posting_status = pending`.
 
-1. Stand up the tunnel to Zaka's VPS, then set `SAGE_DB_HOST` /
-   `SAGE_DB_DATABASE` / `SAGE_WRITE_DATABASE` / credentials on the A6 worker,
-   plus `SAGE_MUNI_CODE=ZRDC` and `SAGE_MUNI_NAME=Zaka`. Set the worker's
-   region from where that VPS is (see A6).
+### C1. The VPS
+
+Stand up an Olimem VPS running SQL Server + Sage Evolution, then restore Zaka's
+company database onto it from a council backup.
+
+Two decisions to make before building it, both still open:
+
+- **Where.** Germany matches Binga and puts Railway's `europe-west` ~29 ms away.
+  Johannesburg is ~30–60 ms from Zimbabwe instead of ~180 ms, which matters a
+  great deal *if council staff will work in the hosted Sage interactively* — but
+  Railway has no African region, so the Sage worker would have to run on the VPS
+  itself rather than on Railway. Pick from who actually uses the database.
+- **Which company.** Binga posts into a **parallel** company
+  (`Binga Rural District Council OBilling`, created 2026-07-22 with a copy of
+  the client base) rather than the company the council works in. Whether Zaka
+  mirrors that, and how anything crosses back into the council's own books,
+  needs an explicit answer rather than inheriting Binga's shape by default.
+
+> Do **not** repeat Binga's exposure: bind SQL Server to the tailnet or an IP
+> allowlist, never to the public interface, and use a real credential rather
+> than `sa` with a shared password.
+
+### C2. Wiring it up
+
+1. Set `SAGE_DB_HOST` / `SAGE_DB_DATABASE` / `SAGE_WRITE_DATABASE` and
+   credentials on the A6 worker, plus `SAGE_MUNI_CODE=ZRDC` and
+   `SAGE_MUNI_NAME=Zaka`. Region per C1.
 2. Zaka's posting map in `config/sage.php` — `posting.class_items` (client class
    → Sage `StkItem` code), tax types and currency — from the council's Sage
    price list. Binga's map is checked in as the default and **will not** be

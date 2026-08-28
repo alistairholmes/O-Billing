@@ -1,23 +1,45 @@
 # O-Billing Deployment Runbook — Binga RDC
 
-**Model:** one instance per council. The **app UI + database** run in the cloud
-(Railway); a **headless worker** on **Olimem's own server on the Binga LAN** does
-all Sage work locally and talks to the cloud only outbound. No O-Billing code
-runs on any council machine.
+> **This section described a design that was never deployed.** It claimed the
+> Sage worker runs on an Olimem server on the Binga LAN. It does not, and there
+> is no tunnel to any council network. Corrected 2026-08-28 from the live
+> system; the rest of this runbook is otherwise accurate, but read Part B as a
+> road not taken.
+
+**Model as actually deployed:** one instance per council, entirely hosted. The
+**app UI + Postgres** run on Railway. **Sage itself runs on an Olimem VPS**
+(Contabo, Germany, `161.97.178.181`) — not on council hardware — and the Sage
+worker runs on Railway beside it, pinned to an EU region.
 
 ```
-Internet ─https─> Railway  binga.obilling.<domain>
+Internet ─https─> Railway (project capable-wholeness)
                    • Filament UI (no sqlsrv driver)
                    • Postgres  (customers, billing_runs, invoices, users, jobs)
                    • web + default-queue worker (NEVER the 'sage' queue)
-                        ▲ outbound TLS (worker polls 'sage' queue, writes results)
-                   [Binga LAN] Olimem server
-                   • queue:work --queue=sage   (NSSM Windows service)
-                   • sqlsrv ─> Council SQL Server / Sage Evolution (LAN speed)
+                   • meticulous-wonder: queue:work --queue=sage   [EU region]
+                        │ sqlsrv, ~29 ms
+                        ▼
+                  Olimem VPS, Germany — SQL Server + Sage Evolution
+                   • "Binga Rural District Council"          (council's company)
+                   • "Binga Rural District Council OBilling"  (O-Billing posts here)
 ```
 
-Heavy Sage traffic never leaves the LAN; only small job/result rows cross the
-internet. The worker opens no inbound ports at Binga.
+Two Sage company databases sit on that VPS sharing one client base (10,371 at
+the time of writing). O-Billing posts into the **`… OBilling`** company, created
+2026-07-22 — **not** into the company the council works in. Anything that has to
+reach the council's own books crosses that boundary by some other means.
+
+**Why 29 ms:** the worker and Sage are both in Europe. The EU-vs-US measurement
+in §A7 is a comparison between two European endpoints — it is not evidence that
+a link to Zimbabwe can be made fast. No cloud region is near Masvingo, so a
+council whose Sage genuinely stays on-premises cannot reach these numbers by
+choosing a region; see `deployment-zaka.md`.
+
+> **Open security issue.** That SQL Server is bound to the VPS's **public** IP
+> and answers `sa` from anywhere on the internet — verified 2026-08-28 by
+> connecting from a laptop outside any tunnel, with the password that sits in
+> the local `.env`. Restrict it to a tailnet or an IP allowlist, and rotate the
+> credential.
 
 ---
 
@@ -151,7 +173,13 @@ to Sage; keep it separate from the default worker (A5).
 
 ---
 
-## Part B — On-site Sage worker (Olimem's Binga server)
+## Part B — On-site Sage worker (NOT DEPLOYED — road not taken)
+
+> Binga runs no on-site worker: Sage is hosted on the VPS and the worker runs on
+> Railway (§A7). Kept for a council that genuinely keeps Sage on-premises — but
+> note that putting the worker on a **council-owned** machine puts our source on
+> hardware their IT administers, which is why Zaka rejected it.
+
 
 ### B1. Install runtime (once)
 - PHP 8.4 (NTS x64) — add to PATH.
