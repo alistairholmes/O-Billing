@@ -240,41 +240,67 @@ detail.
 not set any `SAGE_*` variables. The app runs fine without them — billing runs
 generate and sit at `posting_status = pending`.
 
+**Decided 2026-08-28:** VPS in **Germany**, matching Binga, so Railway's
+`europe-west` stays ~29 ms away and the Sage worker remains an ordinary Railway
+service. O-Billing posts into a **parallel company**, as Binga does.
+
+The trade-off accepted with Germany: interactive Sage use from Zimbabwe is
+~180 ms and will feel slow. That is fine while the hosted database is a posting
+target. If Zaka staff end up working in it day to day, revisit — Johannesburg is
+~30–60 ms from Zimbabwe, at the cost of moving the worker onto the VPS itself,
+since Railway has no African region.
+
 ### C1. The VPS
 
-Stand up an Olimem VPS running SQL Server + Sage Evolution, then restore Zaka's
-company database onto it from a council backup.
+A **separate** Contabo VPS from Binga's, in Germany: Windows Server + SQL Server
++ Sage Evolution. Binga's box could technically host Zaka's companies too, and
+that would be cheaper, but two councils' financial data on one host means one
+compromise or one mistaken `USE` statement reaches both. Separate hosts unless
+someone decides otherwise deliberately.
 
-Two decisions to make before building it, both still open:
+### C2. The two databases
 
-- **Where.** Germany matches Binga and puts Railway's `europe-west` ~29 ms away.
-  Johannesburg is ~30–60 ms from Zimbabwe instead of ~180 ms, which matters a
-  great deal *if council staff will work in the hosted Sage interactively* — but
-  Railway has no African region, so the Sage worker would have to run on the VPS
-  itself rather than on Railway. Pick from who actually uses the database.
-- **Which company.** Binga posts into a **parallel** company
-  (`Binga Rural District Council OBilling`, created 2026-07-22 with a copy of
-  the client base) rather than the company the council works in. Whether Zaka
-  mirrors that, and how anything crosses back into the council's own books,
-  needs an explicit answer rather than inheriting Binga's shape by default.
+Mirroring Binga:
 
-> Do **not** repeat Binga's exposure: bind SQL Server to the tailnet or an IP
-> allowlist, never to the public interface, and use a real credential rather
-> than `sa` with a shared password.
+1. Restore Zaka's Sage company from a council backup — this is the company the
+   council works in, and O-Billing never writes to it.
+2. Create **`Zaka Rural District Council OBilling`** as a copy of it. This is
+   O-Billing's posting target, and the only database `SAGE_WRITE_DATABASE`
+   points at.
 
-### C2. Wiring it up
+> **Still unanswered, and it should not stay that way:** how postings in the
+> `… OBilling` company reach the council's actual books. Binga has had this
+> shape since 2026-07-22 and accumulated 12,069 invoices in the parallel company
+> against 1,711 in the council's own; whatever bridges them is not in this repo.
+> Establish Zaka's answer before the first live run, not after.
 
-1. Set `SAGE_DB_HOST` / `SAGE_DB_DATABASE` / `SAGE_WRITE_DATABASE` and
-   credentials on the A6 worker, plus `SAGE_MUNI_CODE=ZRDC` and
-   `SAGE_MUNI_NAME=Zaka`. Region per C1.
+### C3. Access — tailnet, not the public internet
+
+Put the VPS on the tailnet and have the Railway worker reach it by its
+`100.x` address. **Do not bind SQL Server to the public interface** — Binga's
+does, and answers `sa` from anywhere. An IP allowlist is not a workable
+substitute here: Railway egress addresses are not static, which is very likely
+how Binga ended up simply opening the port.
+
+Use a dedicated SQL login scoped to the two databases, not `sa`.
+
+### C4. Wiring it up
+
+1. Create the A6 worker (region `europe-west`) and set `SAGE_DB_HOST` (the
+   tailnet address), `SAGE_DB_DATABASE`, `SAGE_WRITE_DATABASE`, the SQL
+   credentials, `SAGE_MUNI_CODE=ZRDC` and `SAGE_MUNI_NAME=Zaka`, plus
+   `DB_QUEUE_RETRY_AFTER=14400` and `SAGE_JOB_MEMORY_LIMIT=2048M`.
 2. Zaka's posting map in `config/sage.php` — `posting.class_items` (client class
    → Sage `StkItem` code), tax types and currency — from the council's Sage
    price list. Binga's map is checked in as the default and **will not** be
-   right for Zaka.
+   right for Zaka. Binga's own experience is the warning here: its `OBilling`
+   database uses different price-list ids, class ids and item codes from the
+   older company it was derived from, so verify every mapping against the
+   database you are actually posting into.
 3. **Sage → Import from Sage → Import ratepayers (ledger)**, then **Price
    tariffs**, then the per-client charge workbook.
 4. A small scoped billing run → **Post to Sage** → verify `InvNum` (DocState 4),
-   `PostAR`, `PostGL` and the `Client` balance in Zaka's Sage.
+   `PostAR`, `PostGL` and the `Client` balance in the `… OBilling` company.
 
 ---
 
