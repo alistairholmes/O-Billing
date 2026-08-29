@@ -224,11 +224,38 @@ crest, not a wide wordmark, so it needs a little more height to read.
 
 ## Part C — Sage (pending)
 
-Zaka's Sage currently runs on a **council-owned** machine on the Zaka LAN,
-reachable only by AnyDesk. That machine is out of bounds for our code: council
-IT administers it, so an on-site worker would put O-Billing's source on
+Zaka's Sage currently runs on a **council-owned** machine, `zaka-billing-server`,
+now on the tailnet at **`100.78.84.38`** (Windows, SQL Server **Express**, clock
+in UTC, internet via **Starlink** — its tailnet peer endpoint is a
+`2605:59c1::/32` SpaceX address). That machine is out of bounds for our code:
+council IT administers it, so an on-site worker would put O-Billing's source on
 hardware we don't control. Decided 2026-08-28 to follow **Binga's model
 instead — host Zaka's Sage on an Olimem VPS** and run the Sage worker beside it.
+
+Tailnet access does not change that decision; it makes executing it practical.
+Schema discovery, the posting map, and the backup itself can now all be done
+over the tailnet instead of through AnyDesk.
+
+**The companies on that server** (2026-08-29):
+
+| Database | Clients | Invoices | Last invoice | Size |
+|---|---|---|---|---|
+| `ZAKA Rural District Council` | 21,734 | 6,154 | 2025-03-21 | 592 MB |
+| `ZAKA Rural District Council (ZiG)` | 21,476 | 0 | — | 912 MB |
+| `Copy of ZAKA RURAL DISTRICT COUNCIL` | 20,780 | 22 | 2024-02-27 | 336 MB |
+
+Two things to settle from this. Zaka has not raised an invoice in Sage since
+**March 2025**, so confirm what the council is actually running on today. And
+there is both a USD company and a **ZiG** one with no invoices at all — which of
+the two O-Billing treats as the source of truth is an open question, not a
+detail.
+
+**Zaka is roughly twice Binga's size — 21,734 ratepayers against 10,371 — which
+raises the cost of getting co-location wrong.** Scaling Binga's measured figures
+(3,500 documents in ~15 min at 29 ms, i.e. ~9 round-trips per document), a Zaka
+run of ~7,000 documents lands near **30 min at 29 ms** but **over 2 hours at
+125 ms**. The worker has to sit next to Sage; no transport choice substitutes
+for that.
 
 This is a hosting decision, not a networking one. Tunnelling to the council LAN
 was considered and rejected: no cloud region is near Masvingo, so a remote
