@@ -377,6 +377,45 @@ same shapes as classes ZiG already has (`SHP DEV`, `IND DEV`, `BS LEA`,
 `CHUR LEA`, `INS DLV`). A matcher that handles ZiG will handle them. Still,
 **re-run coverage against the USD company before go-live** rather than assuming.
 
+### C7. Can Zaka bill like Binga? Not without three changes
+
+The **structure carries over** — that is the important part. Zaka's debtor
+accounts are `CUN243-LEA-(P3SP3)`, exactly the `{stand}-{token}-{portion}`
+shape `LedgerAccount::split()` expects, and 19,293 of 21,476 accounts (90%)
+have the full three segments. So the ledger import's core assumption holds and
+this is tuning, not re-architecture.
+
+Three things do need work, in descending order of size:
+
+**1. The class→item matcher** — C5. 0.2% coverage. Blocks posting entirely.
+
+**2. Billing cadences are missing for 39.5% of accounts.** `TOKEN_FREQUENCIES`
+was written from Binga's gazetted schedule and doesn't know Zaka's tokens:
+
+| Token | Accounts | Cadence known? |
+|---|---|---|
+| `LEA` | 6,069 | yes — annually |
+| `DEV` | 4,299 | **no** — Development Levy |
+| `LIC` | 3,937 | yes — monthly |
+| `REF` | 2,973 | yes — monthly |
+| `DLV` | 1,901 | **no** — Development Levy again, second spelling |
+| `S/EXT` | 61 | **no** — sand extraction |
+| `REN` | 41 | **no** |
+
+`DEV` and `DLV` are the same charge spelled two ways across 6,200 accounts
+(29%) and need canonicalising as well as a cadence. The cadences themselves
+have to come from **Zaka's own gazetted tariff schedule** — they cannot be
+inferred from Binga's, and guessing them silently bills people at the wrong
+frequency.
+
+**3. ~2,016 accounts (9%) have no service token at all.** They are
+two-segment, `{stand}-{portion}`, so `split()` returns the *portion* as the
+token — hence `P3SP3` (916), `P6SP1` (751), `P3SP1` (271), `P2SP1` (53) showing
+up in the table above as if they were services. Left alone this invents bogus
+`LEDGER-P3SP3` service types and mis-groups those ratepayers. The fix is to
+recognise portion-shaped segments (`P\dSP\d`) as portions rather than tokens,
+and take the service from the client's class instead.
+
 One quirk that shows up in both, worth knowing before it surprises someone:
 **`StkItem` codes are not unique.** 713 rows share 670 codes — `dc40-OTL-P3SP3`
 covers Electrical Workshop, Peanut Butter Processing *and* Tombstone. Code-keyed
