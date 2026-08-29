@@ -359,6 +359,33 @@ The fix is to score **all** tokens on both sides rather than only the first, so
 `RES LEA` matches `LEA`. `tests/Unit/SagePriceMatchingTest.php` locks Binga's
 current behaviour and must stay green — Binga posts live off this code path.
 
+### C6. Is the ZiG company a fair test of the live one? Yes
+
+Checked 2026-08-29, `ZAKA Rural District Council (ZiG)` against
+`ZAKA Rural District Council`. The ZiG copy is a near-exact structural subset,
+so matcher work done against it transfers.
+
+| | ZiG | USD | |
+|---|---|---|---|
+| `CliClass` | 637 | 646 | all 637 ZiG ids exist in USD, **zero code mismatches** |
+| `Client` | 21,476 | 21,734 | |
+| `StkItem` (distinct codes) | 670 | 671 | one USD-only item, `ad23-OF-P3SP3` |
+| `TaxRate` / price lists / `GrpTbl` | 7 / 3 / 52 | 7 / 3 / 52 | identical |
+
+The 9 USD-only classes carry **11 clients between them** — 0.05% — and are the
+same shapes as classes ZiG already has (`SHP DEV`, `IND DEV`, `BS LEA`,
+`CHUR LEA`, `INS DLV`). A matcher that handles ZiG will handle them. Still,
+**re-run coverage against the USD company before go-live** rather than assuming.
+
+One quirk that shows up in both, worth knowing before it surprises someone:
+**`StkItem` codes are not unique.** 713 rows share 670 codes — `dc40-OTL-P3SP3`
+covers Electrical Workshop, Peanut Butter Processing *and* Tombstone. Code-keyed
+lookups (`$itemRows[$s->Code]`, `keyBy('Code')`) therefore silently keep one row
+and drop the rest. That is **safe for GL posting** — checked, and no duplicated
+code resolves to more than one revenue account; all of these sit in group 1 →
+`SalesAccLink 3443`. It is not necessarily safe for price import, where the
+dropped rows could carry different prices, so treat that separately.
+
 ---
 
 ## Part D — Demo data and test access (REMOVE BEFORE GO-LIVE)
