@@ -114,4 +114,40 @@ class SagePriceMatchingTest extends TestCase
 
         $this->assertSame([], $resolved);
     }
+
+    /**
+     * Zaka puts the service token SECOND in a class code (the first is the
+     * property type) but FIRST in an item code. Matching on the leading family
+     * alone therefore scores "RES" against "LEA" and resolves nothing — it
+     * covered 1 of Zaka's 637 classes before the second pass existed.
+     */
+    public function test_class_whose_service_token_is_not_leading_still_matches(): void
+    {
+        $resolved = $this->resolve(
+            [[1, 'RES LEA 504-(P3SP3)', 'Jerera High Density Lease-(P3SP3)']],
+            [
+                ['a17-LEA-P3SP3', 'Lease Jerera High Density stands-P3SP3', 12.0],
+                ['a26-REF-P2SP1', 'Refuse collection High Density/Month-P2SP1', 4.0],
+            ],
+        );
+
+        $this->assertSame('a17-LEA-P3SP3', $resolved['RES LEA 504-(P3SP3)']['item']);
+    }
+
+    /**
+     * The second pass must never override what the leading family already
+     * decided, or Binga's audited results would shift underneath it.
+     */
+    public function test_leading_family_wins_over_a_later_token(): void
+    {
+        $resolved = $this->resolve(
+            [[1, 'REF RES 001-(P2SP1)', 'Refuse-Residential High-(P2SP1)']],
+            [
+                ['P2SP1-REF FEE001', 'Refuse fee-Residential High (P2SP1)', 9.0],
+                ['P3SP3-RES RATE001', 'Residential High rate (P3SP3)', 3.0],
+            ],
+        );
+
+        $this->assertSame('P2SP1-REF FEE001', $resolved['REF RES 001-(P2SP1)']['item']);
+    }
 }

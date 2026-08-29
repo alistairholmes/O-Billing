@@ -291,11 +291,26 @@ final class SagePriceImportService
      */
     private function bestDescriptionMatch(object $class, array $items): ?array
     {
-        $family = $this->family((string) $class->Code);
-        if ($family === null) {
+        $families = $this->families((string) $class->Code);
+        if ($families === []) {
             return null;
         }
 
+        // Two passes, narrowest first, so this stays strictly additive: a class
+        // that resolves on the leading family alone resolves exactly as it did
+        // before, and only classes that would otherwise be reported unmatched
+        // get a second look at their remaining family tokens.
+        return $this->matchWithin($class, $items, [$families[0]])
+            ?? (count($families) > 1 ? $this->matchWithin($class, $items, $families) : null);
+    }
+
+    /**
+     * @param  list<array{code: string, desc: string, price: float, family: ?string}>  $items
+     * @param  list<string>  $families  acceptable service families for this pass
+     * @return array{price: float, via: string, item: string}|null
+     */
+    private function matchWithin(object $class, array $items, array $families): ?array
+    {
         $classWords = $this->significantWords((string) $class->Code.' '.$class->Description);
         if ($classWords === []) {
             return null;
@@ -304,7 +319,7 @@ final class SagePriceImportService
         $best = null;
         $bestScore = 0;
         foreach ($items as $item) {
-            if ($item['family'] !== $family || $item['price'] <= 0) {
+            if ($item['family'] === null || ! in_array($item['family'], $families, true) || $item['price'] <= 0) {
                 continue;
             }
 
@@ -339,15 +354,33 @@ final class SagePriceImportService
         // Item codes look like "P3SP3-ASS RATE004"; class codes like
         // "ASS R-RES-MED-P3SP3". Strip the project segments (P1SP4 …), then take
         // the first alphabetic run and normalise known aliases.
+        return $this->families($text)[0] ?? null;
+    }
+
+    /**
+     * Every alphabetic run that could name the service family, in order.
+     *
+     * Councils don't agree on which position carries the service. Binga leads
+     * with it on both sides ("P1SP4-SVS162" ↔ "ASS R-RES-MED-P3SP3"), so the
+     * first run is enough there. Zaka leads its CLASS codes with the property
+     * type and its ITEM codes with the service ("RES LEA 504" ↔ "a26-REF-P2SP1",
+     * whose "a26" is too short to count), which puts the two taxonomies on
+     * different dimensions and matches nothing on first-run alone.
+     *
+     * @return list<string>
+     */
+    private function families(string $text): array
+    {
         $stripped = preg_replace('/P\d+(SP\d+)?/i', ' ', strtoupper($text)) ?? '';
 
+        $out = [];
         foreach (preg_split('/[^A-Z]+/', $stripped) ?: [] as $word) {
             if (strlen($word) >= 2) {
-                return self::FAMILY_ALIASES[$word] ?? $word;
+                $out[] = self::FAMILY_ALIASES[$word] ?? $word;
             }
         }
 
-        return null;
+        return array_values(array_unique($out));
     }
 
     /**

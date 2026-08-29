@@ -387,7 +387,12 @@ this is tuning, not re-architecture.
 
 Three things do need work, in descending order of size:
 
-**1. The class→item matcher** — C5. 0.2% coverage. Blocks posting entirely.
+**1. The class→item matcher** — C5. **Done.** Zaka went from 0.2% to **34.9% of
+classes / 62.2% of clients**, with Binga's numbers unchanged to the client
+(459/509 and 6,774/10,366 before and after). For scale, Binga posts live at
+**90.2% of classes / 65.3% of clients** — so Zaka's client coverage is now
+roughly at Binga's operating level, and the remaining gap is the same kind of
+gap Binga already runs with.
 
 **2. Billing cadences are missing for 39.5% of accounts.** `TOKEN_FREQUENCIES`
 was written from Binga's gazetted schedule and doesn't know Zaka's tokens:
@@ -408,13 +413,13 @@ have to come from **Zaka's own gazetted tariff schedule** — they cannot be
 inferred from Binga's, and guessing them silently bills people at the wrong
 frequency.
 
-**3. ~2,016 accounts (9%) have no service token at all.** They are
-two-segment, `{stand}-{portion}`, so `split()` returns the *portion* as the
-token — hence `P3SP3` (916), `P6SP1` (751), `P3SP1` (271), `P2SP1` (53) showing
-up in the table above as if they were services. Left alone this invents bogus
-`LEDGER-P3SP3` service types and mis-groups those ratepayers. The fix is to
-recognise portion-shaped segments (`P\dSP\d`) as portions rather than tokens,
-and take the service from the client's class instead.
+**3. ~2,016 accounts (9%) have no service token at all.** **Done.** They are
+two-segment, `{stand}-{portion}`, so `split()` returned the *portion* as the
+token — `P3SP3` (916), `P6SP1` (751), `P3SP1` (271), `P2SP1` (53) all appeared
+as if they were services, inventing `LEDGER-P3SP3` service types and
+mis-grouping those ratepayers. `LedgerAccount` now recognises portion-shaped
+segments and yields `(other)`; zero accounts still produce one. Their service
+has to come from the client's class instead.
 
 One quirk that shows up in both, worth knowing before it surprises someone:
 **`StkItem` codes are not unique.** 713 rows share 670 codes — `dc40-OTL-P3SP3`

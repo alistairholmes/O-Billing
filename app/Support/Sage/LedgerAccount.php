@@ -24,13 +24,24 @@ final class LedgerAccount
 
         if ($count < 3) {
             // No portion suffix: best effort {stand}-{token}, or just {stand}.
-            return [$parts[0], $count === 2 ? (strtoupper($parts[1]) ?: '(other)') : '(other)'];
+            // A two-segment code is often {stand}-{portion} with no service at
+            // all (Zaka has ~2,000 of these), and reading the portion as a
+            // service invents ledger service types like "LEDGER-P3SP3".
+            $token = $count === 2 ? strtoupper($parts[1]) : '';
+
+            return [$parts[0], self::isPortion($token) ? '(other)' : ($token ?: '(other)')];
         }
 
         $token = strtoupper($parts[$count - 2]);
         $prefix = implode('-', array_slice($parts, 0, $count - 2));
 
-        return [$prefix, $token ?: '(other)'];
+        return [$prefix, self::isPortion($token) ? '(other)' : ($token ?: '(other)')];
+    }
+
+    /** Is this segment a project/portion marker (P3SP3, (P6SP1)) rather than a service? */
+    private static function isPortion(string $segment): bool
+    {
+        return preg_match('/^\(?P\d+(SP\d+)?\)?$/i', $segment) === 1;
     }
 
     /** The trailing portion segment (e.g. "P3SP3"), or null when absent. */
