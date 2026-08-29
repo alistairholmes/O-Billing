@@ -317,17 +317,47 @@ Use a dedicated SQL login scoped to the two databases, not `sa`.
    tailnet address), `SAGE_DB_DATABASE`, `SAGE_WRITE_DATABASE`, the SQL
    credentials, `SAGE_MUNI_CODE=ZRDC` and `SAGE_MUNI_NAME=Zaka`, plus
    `DB_QUEUE_RETRY_AFTER=14400` and `SAGE_JOB_MEMORY_LIMIT=2048M`.
-2. Zaka's posting map in `config/sage.php` — `posting.class_items` (client class
-   → Sage `StkItem` code), tax types and currency — from the council's Sage
-   price list. Binga's map is checked in as the default and **will not** be
-   right for Zaka. Binga's own experience is the warning here: its `OBilling`
-   database uses different price-list ids, class ids and item codes from the
-   older company it was derived from, so verify every mapping against the
-   database you are actually posting into.
+2. Zaka's posting map — see **C5**, which is the long pole. Tax types are the
+   one thing that carries over unchanged: Zaka's `TaxRate` has `1 = Output Tax`
+   at 15% and `7 = Exempt`, matching the committed
+   `SAGE_POST_TAXTYPE` / `SAGE_POST_EXEMPT_TAXTYPE` defaults.
 3. **Sage → Import from Sage → Import ratepayers (ledger)**, then **Price
    tariffs**, then the per-client charge workbook.
 4. A small scoped billing run → **Post to Sage** → verify `InvNum` (DocState 4),
    `PostAR`, `PostGL` and the `Client` balance in the `… OBilling` company.
+
+### C5. The class→item matcher does not transfer to Zaka
+
+Measured 2026-08-29 against `ZAKA Rural District Council (ZiG)`:
+`SagePriceImportService::classItemMap()` resolves **1 of 637 client classes —
+8 of 21,476 clients**. Binga's coverage is total; Zaka's is nil. Assume nothing
+about this working out of the box.
+
+It is not a data problem. Zaka has a USD price list (`_etblPriceListName` id 2)
+with 478 priced items, and `billableItems()` finds it correctly.
+
+The cause is `family()`, which takes the **first** alphabetic run of a code as
+the service family after stripping `P\dSP\d` segments. Zaka's two sides put
+different things first:
+
+| | Code | `family()` |
+|---|---|---|
+| Class | `RES LEA 504-(P3S` | `RES` — property type |
+| Item | `a26-REF-P2SP1` | `REF` — service (`a26` strips out) |
+
+So `RES` is scored against `LEA`/`REF` and can never match. Zaka's service token
+is in **second** position on the class side. Binga's codes (`P1SP4-SVS162`,
+`ASS R-RES-MED-P3SP3`) yield the same family on both sides, which is why the
+matcher was 100% there.
+
+Zaka also models classes differently: one class per **location × charge type**
+(`Jerera High Density Lease` / `Refuse` / `Devy Levy` are three classes), so a
+ratepayer holds several debtor accounts. That is what produces 637 classes
+against Binga's ~30, and it rules out hand-maintaining `posting.class_items`.
+
+The fix is to score **all** tokens on both sides rather than only the first, so
+`RES LEA` matches `LEA`. `tests/Unit/SagePriceMatchingTest.php` locks Binga's
+current behaviour and must stay green — Binga posts live off this code path.
 
 ---
 
