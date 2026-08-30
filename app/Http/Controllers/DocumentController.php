@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Models\AgeingRow;
+use App\Models\AgeingSnapshot;
 use App\Models\BillingRun;
 use App\Models\Invoice;
 use App\Services\Billing\BillingRunService;
@@ -93,6 +95,29 @@ class DocumentController extends Controller
         ]);
 
         return $this->respond($request, $pdf, "post-billing-{$billingRun->run_number}.pdf");
+    }
+
+    /** Debtor age analysis per service, as at the snapshot's date. */
+    public function ageAnalysis(Request $request, AgeingSnapshot $ageingSnapshot): Response
+    {
+        $this->authorizeMunicipality($request, $ageingSnapshot);
+
+        $ageingSnapshot->load('rows');
+
+        $pdf = Pdf::loadView('pdf.age-analysis', [
+            'snapshot' => $ageingSnapshot,
+            'rowsByCurrency' => $ageingSnapshot->rows
+                ->sortByDesc(fn (AgeingRow $r) => abs((float) $r->total))
+                ->groupBy('currency'),
+            'buckets' => AgeingRow::BUCKETS,
+            'municipality' => $ageingSnapshot->municipality,
+        ]);
+
+        // Five bucket columns plus service, accounts and total do not fit an A4
+        // portrait page without the figures wrapping.
+        $pdf->setPaper('a4', 'landscape');
+
+        return $this->respond($request, $pdf, "age-analysis-{$ageingSnapshot->as_at->format('Y-m-d')}.pdf");
     }
 
     /**

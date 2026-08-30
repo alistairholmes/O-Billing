@@ -18,4 +18,6 @@ Route::middleware('auth')->prefix('documents')->name('documents.')->group(functi
         ->name('billing-run.pre-billing');
     Route::get('billing-runs/{billingRun}/post-billing/pdf', [DocumentController::class, 'postBillingReport'])
         ->name('billing-run.post-billing');
+    Route::get('ageing/{ageingSnapshot}/pdf', [DocumentController::class, 'ageAnalysis'])
+        ->name('ageing');
 });

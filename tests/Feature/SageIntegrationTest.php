@@ -24,6 +24,7 @@ use App\Services\Sage\SageBillingRunPoster;
 use App\Services\Sage\SagePropertyWriter;
 use App\Support\Sage\LedgerAccount;
 use App\Support\Tenancy\CurrentMunicipality;
+use Carbon\CarbonInterface;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
@@ -193,11 +194,66 @@ class SageIntegrationTest extends TestCase
             }
         }
 
-        $this->fail('No billable ledger client with a resolvable class found in the connected Sage database.');
+        // Not every council's Sage resolves a billable class — Zaka's classes
+        // are named on a different axis to its price list, so most carry no
+        // item. That is a fact about the connected database, not a defect in
+        // the code under test, so skip rather than fail.
+        $this->markTestSkipped(
+            'The connected Sage database ('.DB::connection('sage')->getDatabaseName().
+            ') has no ledger client with a resolvable billable class.'
+        );
+    }
+
+    /**
+     * Posting resolves the Sage accounting period for the run's month and
+     * refuses a blocked one. A council that has closed the current period is a
+     * fact about their books, not a defect here — Zaka's August 2026 period is
+     * blocked, for instance — so skip rather than fail.
+     */
+    private function requireOpenSagePeriod(CarbonInterface $month): void
+    {
+        $period = DB::connection('sage')->table('_etblPeriod')
+            ->whereBetween('dPeriodDate', [
+                $month->copy()->startOfMonth()->format('Y-m-d'),
+                $month->copy()->endOfMonth()->format('Y-m-d 23:59:59'),
+            ])->first();
+
+        if ($period === null) {
+            $this->markTestSkipped('No Sage accounting period covers '.$month->format('M Y').' in the connected company.');
+        }
+
+        if ((bool) $period->bBlocked) {
+            $this->markTestSkipped(
+                'Sage accounting period '.$period->idPeriod.' ('.$month->format('M Y').
+                ') is blocked for posting in '.DB::connection('sage')->getDatabaseName().'.'
+            );
+        }
+    }
+
+    /**
+     * Guard for tests that WRITE to Sage.
+     *
+     * `SAGE_WRITE_DATABASE` points at whichever council is being worked on, and
+     * that is routinely a live company on a council's own server. Running the
+     * suite must never post documents into one by accident, so writing is
+     * opt-in: set `SAGE_TEST_WRITES=true` and point the write connection at a
+     * company you are willing to dirty.
+     */
+    private function requireWritableSageSandbox(): void
+    {
+        if (! filter_var(env('SAGE_TEST_WRITES', false), FILTER_VALIDATE_BOOLEAN)) {
+            $this->markTestSkipped(
+                'Sage write tests are opt-in. Set SAGE_TEST_WRITES=true, with SAGE_WRITE_DATABASE '.
+                'pointed at a company you are willing to write test documents into (currently: '.
+                DB::connection('sage_write')->getDatabaseName().').'
+            );
+        }
     }
 
     public function test_billing_run_poster_preview_resolves_sage_accounts_without_writing(): void
     {
+        $this->requireOpenSagePeriod(now()->startOfMonth());
+
         [$muni] = $this->tenantUser();
 
         app(CurrentMunicipality::class)->runFor($muni->id, function () use ($muni): void {
@@ -258,6 +314,8 @@ class SageIntegrationTest extends TestCase
 
     public function test_property_writer_creates_one_ledger_debtor_account_per_service(): void
     {
+        $this->requireWritableSageSandbox();
+
         [$muni] = $this->tenantUser();
 
         app(CurrentMunicipality::class)->runFor($muni->id, function () use ($muni): void {
@@ -323,6 +381,8 @@ class SageIntegrationTest extends TestCase
 
     public function test_single_invoice_posts_to_sage_as_a_posted_document(): void
     {
+        $this->requireWritableSageSandbox();
+
         [$muni] = $this->tenantUser();
 
         app(CurrentMunicipality::class)->runFor($muni->id, function () use ($muni): void {
