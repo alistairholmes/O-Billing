@@ -24,6 +24,9 @@ class ServiceType extends Model
     public const BASIS_PER_PROPERTY_VALUE = 'per_property_value';
     public const BASIS_PER_UNIT = 'per_unit';
 
+    /** Rate is per hectare of the customer's land_size (which is held in m²). */
+    public const BASIS_PER_HECTARE = 'per_hectare';
+
     protected $fillable = [
         'municipality_id', 'name', 'code', 'billing_basis',
         'default_frequency', 'unit_label', 'active',
@@ -72,6 +75,7 @@ class ServiceType extends Model
         return [
             self::BASIS_FLAT => 'Flat monthly charge',
             self::BASIS_PER_PROPERTY_VALUE => 'Rate on property value',
+            self::BASIS_PER_HECTARE => 'Rate per hectare of land',
             self::BASIS_PER_UNIT => 'Per unit (quantity)',
         ];
     }

@@ -141,6 +141,91 @@ class BillingEngineTest extends TestCase
         });
     }
 
+    /**
+     * Land is stored in m² but these tariffs are gazetted per hectare, so the
+     * conversion is the whole point of the basis — getting it the wrong way
+     * round misbills by a factor of 10,000.
+     */
+    public function test_per_hectare_services_bill_on_land_size_converted_from_square_metres(): void
+    {
+        $municipality = Municipality::create([
+            'name' => 'Hectare Muni',
+            'code' => 'HEC',
+            'base_currency' => 'USD',
+            'supported_currencies' => ['USD'],
+            'tax_rate' => 0.0,
+            'tax_label' => 'VAT',
+        ]);
+
+        app(CurrentMunicipality::class)->runFor($municipality->id, function () use ($municipality): void {
+            $suburbType = AreaType::create([
+                'municipality_id' => $municipality->id,
+                'name' => 'Ward', 'level' => 1, 'is_billing_level' => true,
+            ]);
+            $ward = Area::create([
+                'municipality_id' => $municipality->id,
+                'area_type_id' => $suburbType->id, 'name' => 'Panganai',
+            ]);
+
+            $levy = ServiceType::create([
+                'municipality_id' => $municipality->id, 'name' => 'Land Development Levy', 'code' => 'LDL',
+                'billing_basis' => ServiceType::BASIS_PER_HECTARE, 'default_frequency' => 'annually', 'active' => true,
+            ]);
+            $service = Service::create([
+                'municipality_id' => $municipality->id, 'service_type_id' => $levy->id,
+                'name' => 'Land Development Levy', 'code' => 'LDL', 'taxable' => false, 'active' => true, 'is_default' => true,
+            ]);
+
+            Tariff::create([
+                'municipality_id' => $municipality->id, 'area_id' => $ward->id,
+                'service_id' => $service->id, 'rate' => 60, 'currency' => 'USD', 'active' => true,
+            ]);
+
+            // 25,000 m² = 2.5 ha at 60/ha = 150.
+            $farm = Customer::create([
+                'municipality_id' => $municipality->id, 'area_id' => $ward->id,
+                'account_number' => 'HA1', 'name' => 'Irrigation Plot', 'type' => 'business',
+                'land_size' => 25_000, 'currency' => 'USD', 'active' => true,
+            ]);
+            $farm->services()->sync([$service->id]);
+
+            // A 1,250 m² township stand is 0.125 ha at 60/ha = 7.50 — a fraction
+            // of a hectare must still bill, not round away to nothing.
+            $stand = Customer::create([
+                'municipality_id' => $municipality->id, 'area_id' => $ward->id,
+                'account_number' => 'HA2', 'name' => 'Township Stand', 'type' => 'residential',
+                'land_size' => 1_250, 'currency' => 'USD', 'active' => true,
+            ]);
+            $stand->services()->sync([$service->id]);
+
+            // No land size recorded: bills nothing rather than guessing an area.
+            $unknown = Customer::create([
+                'municipality_id' => $municipality->id, 'area_id' => $ward->id,
+                'account_number' => 'HA3', 'name' => 'Unsurveyed Stand', 'type' => 'residential',
+                'land_size' => null, 'currency' => 'USD', 'active' => true,
+            ]);
+            $unknown->services()->sync([$service->id]);
+
+            // An annual levy bills only in an annual run, and its tariff is the
+            // whole year's charge — no monthly multiplier is applied.
+            $run = BillingRun::create([
+                'municipality_id' => $municipality->id,
+                'period_month' => now()->startOfMonth(),
+                'frequency' => 'annually',
+            ]);
+            app(BillingRunService::class)->generate($run);
+
+            $this->assertSame(150.0, (float) $farm->invoices()->first()->total);
+            $this->assertSame(7.5, (float) $stand->invoices()->first()->total);
+            $this->assertNull($unknown->invoices()->first());
+
+            // The hectarage is the line quantity, so a bill shows 2.5 ha × 60.
+            $line = $farm->invoices()->first()->lines()->first();
+            $this->assertSame(2.5, (float) $line->quantity);
+            $this->assertSame(60.0, (float) $line->unit_amount);
+        });
+    }
+
     public function test_run_frequency_scales_the_charge_and_scope_limits_who_is_billed(): void
     {
         $municipality = Municipality::create([

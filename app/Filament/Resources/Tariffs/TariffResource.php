@@ -62,6 +62,7 @@ class TariffResource extends Resource
                     ->required()
                     ->helperText(fn ($get) => match (Service::find($get('service_id'))?->serviceType?->billing_basis) {
                         ServiceType::BASIS_PER_PROPERTY_VALUE => 'Charge per 1 unit of property value, per month (e.g. 0.012 = 1.2c per R of value).',
+                        ServiceType::BASIS_PER_HECTARE => 'Price per hectare. Charged on the customer\'s land size, which is captured in m² and converted (10,000 m² = 1 ha). On an annual service this is the whole year\'s rate.',
                         ServiceType::BASIS_PER_UNIT => 'Price per unit consumed.',
                         default => 'Fixed monthly charge.',
                     }),

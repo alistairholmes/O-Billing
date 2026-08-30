@@ -11,6 +11,7 @@ use App\Models\Invoice;
 use App\Models\Service;
 use App\Models\ServiceType;
 use App\Models\Tariff;
+use Brick\Math\BigDecimal;
 use Brick\Math\RoundingMode;
 use Brick\Money\Money;
 use Illuminate\Support\Facades\DB;
@@ -27,6 +28,9 @@ use LogicException;
  */
 final class BillingRunService
 {
+    /** `land_size` is stored in m²; per-hectare tariffs divide by this. */
+    private const SQUARE_METRES_PER_HECTARE = '10000';
+
     /**
      * Dry-run the billing for a run WITHOUT persisting anything. Powers the
      * pre-billing report so a run can be checked before it is processed.
@@ -425,6 +429,7 @@ final class BillingRunService
                 Money::of((string) ($customer->property_value ?? 0), $customer->currency)
                     ->multipliedBy($rate, RoundingMode::HALF_UP),
             ],
+            ServiceType::BASIS_PER_HECTARE => $this->perHectareLine($rate, $customer),
             // Metering deferred: per-unit currently bills a single unit.
             ServiceType::BASIS_PER_UNIT => [
                 1.0,
@@ -437,6 +442,34 @@ final class BillingRunService
                 Money::of($rate, $customer->currency, roundingMode: RoundingMode::HALF_UP),
             ],
         };
+    }
+
+    /**
+     * Land is captured in **square metres** — the valuation-roll convention the
+     * `land_size` column and its m² suffix in the panel both follow — while
+     * these tariffs are gazetted **per hectare**. So the conversion lands in the
+     * quantity, not the rate: an invoice line reads `1.2500 ha × 60.00`, which
+     * is what a ratepayer querying their bill needs to see.
+     *
+     * A property with no recorded land size bills nothing rather than guessing
+     * an area; the caller drops zero-amount lines.
+     *
+     * @return array{0: float, 1: float, 2: Money} [hectares, ratePerHectare, lineAmount]
+     */
+    private function perHectareLine(string $rate, Customer $customer): array
+    {
+        // 4dp so a 250 m² stand (0.025 ha) still bills something, and the
+        // rounding stays in one place rather than compounding per line.
+        $hectares = BigDecimal::of((string) ($customer->land_size ?? 0))
+            ->exactlyDividedBy(self::SQUARE_METRES_PER_HECTARE)
+            ->toScale(4, RoundingMode::HALF_UP);
+
+        return [
+            $hectares->toFloat(),
+            (float) $rate,
+            Money::of($rate, $customer->currency, roundingMode: RoundingMode::HALF_UP)
+                ->multipliedBy($hectares, RoundingMode::HALF_UP),
+        ];
     }
 
     /**

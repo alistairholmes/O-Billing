@@ -89,7 +89,13 @@ class CustomerResource extends Resource
                             ->label('Land size')
                             ->numeric()
                             ->suffix('m²')
-                            ->helperText('Optional — from the valuation roll, if available.'),
+                            ->live(onBlur: true)
+                            // Per-hectare tariffs bill off this field, so show the
+                            // conversion while it is being entered rather than
+                            // leaving it to be discovered on an invoice.
+                            ->helperText(fn ($state) => filled($state) && is_numeric($state)
+                                ? number_format((float) $state / 10000, 4).' ha — used by per-hectare tariffs.'
+                                : 'Optional — from the valuation roll, if available. Per-hectare tariffs bill on this.'),
                         TextInput::make('land_value')
                             ->label('Land value')
                             ->numeric()
@@ -135,6 +141,7 @@ class CustomerResource extends Resource
                 TextColumn::make('land_size')
                     ->label('Land size')
                     ->formatStateUsing(fn ($state) => $state ? number_format((float) $state, 0).' m²' : '—')
+                    ->description(fn ($state) => $state ? number_format((float) $state / 10000, 4).' ha' : null)
                     ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('land_value')
                     ->formatStateUsing(fn ($state, Customer $r) => $state ? Currencies::format($state, $r->currency) : '—')
