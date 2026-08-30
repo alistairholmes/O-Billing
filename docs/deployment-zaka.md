@@ -359,6 +359,31 @@ The fix is to score **all** tokens on both sides rather than only the first, so
 `RES LEA` matches `LEA`. `tests/Unit/SagePriceMatchingTest.php` locks Binga's
 current behaviour and must stay green — Binga posts live off this code path.
 
+### C5b. Zaka has no Sage Municipal add-on — the ledger route is the only route
+
+Checked 2026-08-30. Zaka's database is **plain Sage Evolution**; Binga's carries
+the Municipal / Electronic-Billing add-on. Every `_mtbl*` and `_ccg_EB_*` table
+Binga has is **absent** at Zaka: `_mtblAreas`, `_mtblProperties`,
+`_mtblPropertyPortions`, `_mtblPropertyPortionServices`, `_mtblRateTariffs`,
+`_mtblRateTariffBands`, `_mtblCategories`, `_mtblBillingRuns`,
+`_ccg_EB_Services`.
+
+What that costs, and what it doesn't:
+
+| Path | Zaka | Why |
+|---|---|---|
+| `SageBillingRunPoster` — posting runs | **works** | every dependency present, `InvNum`/`PostAR`/`PostGL`/`StDfTbl`/`Entities`/`_btblInvoiceLines` included |
+| `SageLedgerImportService` — ratepayers | **works** | needs only `Client` + `Areas` |
+| `SagePriceImportService` — class prices | **works** | needs `CliClass`, `StkItem`, `_etblPriceListName/Prices` |
+| `SageTariffImportService` | **works** | needs `_etblPriceListPrices` |
+| `SageImportService` — property/tariff import | **cannot run** | built entirely on `_mtbl*` |
+| `SagePropertyWriter` — writing properties back | **cannot run** | built entirely on `_ccg_EB_*` |
+
+So the **ledger** route — which Part C4 already prescribes — is not merely the
+recommended path for Zaka, it is the only one. Do not plan any work on the
+property-module import or on writing properties into Zaka's Sage unless the
+council buys and installs the Municipal add-on.
+
 ### C6. Is the ZiG company a fair test of the live one? Yes
 
 Checked 2026-08-29, `ZAKA Rural District Council (ZiG)` against
