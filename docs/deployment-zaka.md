@@ -504,10 +504,52 @@ dropped rows could carry different prices, so treat that separately.
 
 ---
 
-## Part D — Demo data and test access (REMOVE BEFORE GO-LIVE)
+## Part D — Demo data (PURGED) and test access
 
-Seeded 2026-08-28 so the panel has something to show before Zaka's real
-ratepayers exist. **None of it should survive go-live.**
+**The demo data was purged on 2026-08-30 and replaced with a real Sage import.**
+The instance now holds 177 areas, 8,230 ratepayers, 29 services and 21,062
+subscriptions — 12,173 priced (57.8%), leaving 6,052 customers billable.
+`test@obilling.test` / `password` still exists and **must still go before
+go-live**.
+
+### How the import was run, with no Sage worker yet
+
+The cloud app cannot reach Sage: the container times out on the tailnet address,
+carries no `pdo_sqlsrv`, and nothing drains the `sage` queue — clicking *Import
+from Sage* in the panel queues a job that never runs and reports nothing. Until
+C4 is built, imports run **from a workstation that is on the tailnet**, writing
+to Railway Postgres over a TCP proxy:
+
+```
+railway → Postgres → tcpProxyCreate(applicationPort 5432)   # altaria.proxy.rlwy.net:30837
+
+DB_CONNECTION=pgsql DB_URL=<public proxy URL> DB_SSLMODE=require \
+SAGE_DB_HOST=100.78.84.38 SAGE_DB_PORT=1433 \
+SAGE_DB_DATABASE="ZAKA Rural District Council (ZiG)" \
+SAGE_DB_USERNAME=sa SAGE_DB_PASSWORD=… \
+SAGE_MUNI_CODE=ZRDC SAGE_MUNI_NAME="Zaka Rural District Council" \
+php artisan sage:import-ledger && php artisan sage:import-prices
+```
+
+> **That proxy leaves Zaka's Postgres reachable from the public internet.** It is
+> credentialed and TLS'd, but it is an exposure that exists only to work around
+> the missing Sage worker. Delete it (`tcpProxyDelete`) once C4 is up, or as soon
+> as the imports are done.
+
+Two behaviours worth knowing before re-running:
+
+- `sage:import-ledger` resolves the municipality by **code** (`ZRDC`), so it
+  reuses the existing tenant rather than creating a second one — but it also
+  rewrites `supported_currencies` to `['USD']`. Zaka's ZWG entry (a guess made
+  at bootstrap, not a council decision) was dropped this way. Re-add it in the
+  panel if the council does bill in ZWG.
+- The import is idempotent: areas key on `sage_id`, customers on account
+  number, service types on code, and subscriptions are rebuilt.
+
+### The original demo seed (historical)
+
+Seeded 2026-08-28 so the panel had something to show before Zaka's real
+ratepayers existed. **None of it survived.**
 
 - **38 customers**, every account number prefixed `DEMO-`, across 7 billing
   wards under Masvingo → Zaka → {Jerera Growth Point, Ndanga, Musiso}.
@@ -575,9 +617,10 @@ Still to confirm once DNS and mail are in place:
 
 ## Outstanding
 
-1. **Purge the demo data and delete `test@obilling.test`** — Part D. This one
+1. **Delete `test@obilling.test`** (the demo data itself is gone — Part D). This
    gates the CNAME: a `password` login must not be reachable on a public
-   hostname.
+   hostname, and the instance now holds 8,230 real ratepayers.
+1b. **Delete the Postgres TCP proxy** once the Sage worker exists — see Part D.
 2. **`MAIL_*` is unset on all three app services.** Password resets and
    notification mail will fail until the council's SMTP is filled in.
 3. **The CNAME is not created yet** (A3) — until it is, use
