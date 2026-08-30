@@ -384,6 +384,53 @@ recommended path for Zaka, it is the only one. Do not plan any work on the
 property-module import or on writing properties into Zaka's Sage unless the
 council buys and installs the Municipal add-on.
 
+**The add-on is not needed, and neither are custom tables.** Creating `_mtbl`-
+shaped tables of our own inside the council's Sage database would mean
+maintaining a private schema inside a third-party product — something a Sage
+upgrade can break — to reach a place the ledger route already reaches.
+`SageLedgerImportService` exists precisely for councils without the module; its
+own docblock says so, and it is what Gokwe South uses.
+
+**Proved end to end against Zaka's live Sage on 2026-08-30**, into a scratch
+database:
+
+```
+sage:import-ledger  ->  areas 176 | customers 8,230 | services 24 | subscriptions 21,062
+sage:import-prices  ->  12,173 of 21,062 subscriptions priced (57.8%)
+                        6,052 of 8,230 customers billable (73.5%)
+```
+
+8,230 stands grouped out of 21,476 debtor accounts, on plain Sage, no add-on.
+
+### C5c. What actually caps pricing coverage — a tariff policy question
+
+The classes left unpriced are overwhelmingly `SHP LIC` and `SHP DEV` — shop
+licences and shop development levies, one class per business centre. They fail
+for a reason no matcher can fix: **Zaka's price list has no "shop licence"
+item.** It prices licences by *trade*, split by location:
+
+| Item | Description | USD |
+|---|---|---|
+| `bq2-LIC-P3SP3` | General Dealer/**Jerera** | 100.00 |
+| `br2-LIC-P3SP3` | General Dealer/**Other Areas** | 60.00 |
+| `vu3-LIC-P3SP2` | Bottle Store/Jerera | 100.00 |
+| `a40-OTL-P3SP3` | Barber Shop/Jerera | 52.00 |
+
+The class says *"a shop at Ndanga Bc"*; the price list says *"a General Dealer
+in Other Areas"*. Bridging those is a council pricing decision, not a text
+match — the information simply is not in the data.
+
+Two answers from the council would unlock most of the remainder:
+
+1. Which trade tariff a generic shop licence bills at (probably **General
+   Dealer**).
+2. Whether the business centres count as **Jerera** or **Other Areas** — the
+   split is roughly 100.00 vs 60.00, so it is not cosmetic.
+
+With those, the rule is mechanical — `SHP LIC` at Jerera → `bq2-LIC-P3SP3`,
+elsewhere → `br2-LIC-P3SP3` — and can go in `posting.class_items` or be taught
+to the matcher as a location rule.
+
 ### C6. Is the ZiG company a fair test of the live one? Yes
 
 Checked 2026-08-29, `ZAKA Rural District Council (ZiG)` against
