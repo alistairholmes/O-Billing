@@ -30,6 +30,7 @@ class AdminPanelProvider extends PanelProvider
             ->brandName(config('app.brand_name'))
             ->brandLogo(config('app.brand_logo'))
             ->brandLogoHeight(config('app.brand_logo_height'))
+            ->viteTheme('resources/css/filament/admin/theme.css')
             ->login()
             ->globalSearch(false) // per-table search covers it; the top-nav bar is clutter
             ->databaseNotifications() // worker reports queued Sage operation outcomes here
