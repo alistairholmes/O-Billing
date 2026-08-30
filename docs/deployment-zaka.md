@@ -402,6 +402,38 @@ sage:import-prices  ->  12,173 of 21,062 subscriptions priced (57.8%)
 
 8,230 stands grouped out of 21,476 debtor accounts, on plain Sage, no add-on.
 
+### C5a. Trial run, 2026-08-30 — do not bill until cadences are confirmed
+
+Two dry runs against the imported ledger (calculated and discarded; nothing
+persisted, nothing posted):
+
+| Cycle | Invoices | Total USD |
+|---|---:|---:|
+| Monthly | 3,049 | 306,647.32 |
+| Annual | 6,051 | 2,972,748.16 |
+
+**`DEV` and `DLV` have no cadence, so they bill in *every* run** — USD 54,291 in
+the monthly cycle *and* USD 651,495 again in the annual one. Run both cycles and
+those ratepayers are billed roughly twice over. This is a configuration fact,
+not a guess about Zaka's schedule.
+
+**Licences look inflated 12×.** `TOKEN_FREQUENCIES` marks `LIC` monthly — a value
+taken from *Binga's* gazetted schedule — producing USD 233,917/month from 722
+accounts averaging USD 324. Zaka's price list has General Dealer at USD 100;
+monthly that is USD 1,200/year for a rural shop licence. Reads annual.
+
+Together: **~USD 6.65M/yr as configured against ~USD 3.43M** on the reading
+above. Refuse (6.59/month) and `DLV` (3.96) look right, so the mapping is not
+uniformly wrong — which is exactly why it needs the schedule rather than a
+blanket correction.
+
+Council brief with the full figures:
+<https://claude.ai/code/artifact/79be32de-5643-42ca-87af-e7c2c2547fe4>
+
+> **Safety state:** no billing schedules are configured, so the live scheduler
+> cannot auto-bill; there are zero invoices in the system. Keep it that way until
+> Zaka's own gazetted schedule lands.
+
 ### C5c. What actually caps pricing coverage — a tariff policy question
 
 The classes left unpriced are overwhelmingly `SHP LIC` and `SHP DEV` — shop
